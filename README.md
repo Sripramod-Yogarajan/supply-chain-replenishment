@@ -31,16 +31,19 @@ mypy
 ## Configuration
 
 - `config.yaml`: chosen settings (source tag C).
-- `derived.yaml`: facts derived from the data (for example `n_days`), never hand-tuned.
+- `derived.yaml`: facts derived from the data (`n_days`, the chosen `item_id` and `first_day`), written by the build commands, never hand-tuned.
+
+Phase 1 run order: `inspect_files`, then `data.dataco`, `data.build`, `graph.build` (outputs in `data/processed/` and `reports/figures/`, not committed).
 
 ## Commands (target interface; `fyp` in the manual is `supply_chain_rl` here)
 
 | Command | Phase |
 | --- | --- |
 | `pytest` | 0 (available) |
-| `python -m supply_chain_rl.data.build` | 1 |
-| `python -m supply_chain_rl.data.dataco` | 1 |
-| `python -m supply_chain_rl.graph.build` | 1 |
+| `python -m supply_chain_rl.data.inspect_files` | 1 (available) |
+| `python -m supply_chain_rl.data.build` | 1 (available) |
+| `python -m supply_chain_rl.data.dataco` | 1 (available) |
+| `python -m supply_chain_rl.graph.build` | 1 (available) |
 | `python -m supply_chain_rl.sim.run --policy warmup --split train --start 100 --days 30 --seed 1` | 2 |
 | `python -m supply_chain_rl.eval.baselines tune` | 3 |
 | `python -m supply_chain_rl.eval.run --policies basestock,movavg --seeds 20 --split test` | 3 |

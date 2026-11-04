@@ -6,15 +6,15 @@ data:
   m5_dir: data/raw/m5
   dataco_csv: data/raw/dataco/DataCoSupplyChainDataset.csv
   dataco_encoding: latin-1
-  item_id: null            # chosen in Phase 1 (see DECISIONS.md D-3 for where it is recorded)
-  first_day: null          # first day with a price, set in Phase 1
+  # item_id and first_day are RESULTS of the item-choice algorithm (manual 6.2); they are recorded
+  # in derived.yaml (DECISIONS.md D-3), not here.
   min_nonzero_share: 0.9   # item selection: minimum share of non-zero sales days
 network:                   # prototype network (four nodes)
   nodes:
     - {id: S1, type: supplier}
     - {id: W1, type: warehouse, supplier: S1}
     - {id: St1, type: store, m5_store: CA_1, warehouse: W1}
-    - {id: St2, type: store, m5_store: CA_2, warehouse: W1}
+    - {id: St2, type: store, m5_store: CA_3, warehouse: W1}
   edge_mode:
     supplier_to_warehouse: Standard Class
     warehouse_to_store: Second Class

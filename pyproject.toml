@@ -7,11 +7,11 @@ name = "supply-chain-rl"
 version = "0.0.1"
 description = "Spatio-temporal graph RL for bullwhip-aware supply chain replenishment (simulation prototype)"
 requires-python = ">=3.11,<3.12"
-dependencies = ["numpy", "pyyaml"]
+dependencies = ["numpy", "pyyaml", "pandas", "pyarrow", "networkx", "matplotlib", "plotly"]
 
 [project.optional-dependencies]
 # Libraries for later phases are added to the matching extra when that phase starts.
-dev = ["pytest", "ruff", "mypy", "types-PyYAML", "pip-tools"]
+dev = ["pytest", "ruff", "mypy", "types-PyYAML", "pandas-stubs", "types-networkx", "pip-tools"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -26,9 +26,22 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["E501"]  # line length is handled by the formatter; long strings and docstrings are allowed
 
 [tool.mypy]
 python_version = "3.11"
 files = ["src", "tests"]
 strict = true
 warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["plotly.*", "pyarrow.*", "matplotlib.*", "networkx.*", "torch.*", "torch_geometric.*"]
+ignore_missing_imports = true
+follow_untyped_imports = true
+
+# pandas-stubs types label lookups (.loc[...]) as broad unions. In table/plot/CLI code this only
+# produces noise, so these specific codes are disabled there; config, seeding and the core M5
+# logic stay fully strict. See DECISIONS.md D-9.
+[[tool.mypy.overrides]]
+module = ["supply_chain_rl.graph.*", "supply_chain_rl.data.build", "supply_chain_rl.data.dataco", "tests.test_graph"]
+disable_error_code = ["union-attr", "index", "arg-type", "call-overload", "operator", "attr-defined", "no-untyped-call"]
