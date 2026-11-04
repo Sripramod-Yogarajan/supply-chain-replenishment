@@ -1,0 +1,5 @@
+# Derived dataset metadata: facts about the data, NOT chosen settings (those are in config.yaml).
+# Small, human-readable, committed. Phase 1 verifies each value against the raw files and
+# rewrites this file; item choice results (item_id, first_day) will be recorded here too.
+data:
+  n_days: 1941   # days in M5 sales_train_evaluation (d_1..d_1941); unverified until Phase 1 (A1)

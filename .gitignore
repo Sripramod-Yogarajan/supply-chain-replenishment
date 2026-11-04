@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+# datasets and generated artifacts (M5 / DataCo are large and licensed)
+data/raw/*
+data/processed/*
+runs/*
+reports/figures/
+!**/.gitkeep
+.env
+*.pt
+*.parquet

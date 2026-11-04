@@ -1,0 +1,53 @@
+# All chosen settings (source tag C). Derived dataset facts live in derived.yaml, not here.
+project:
+  seed: 42
+  n_eval_seeds: 20
+data:
+  m5_dir: data/raw/m5
+  dataco_csv: data/raw/dataco/DataCoSupplyChainDataset.csv
+  dataco_encoding: latin-1
+  item_id: null            # chosen in Phase 1 (see DECISIONS.md D-3 for where it is recorded)
+  first_day: null          # first day with a price, set in Phase 1
+  min_nonzero_share: 0.9   # item selection: minimum share of non-zero sales days
+network:                   # prototype network (four nodes)
+  nodes:
+    - {id: S1, type: supplier}
+    - {id: W1, type: warehouse, supplier: S1}
+    - {id: St1, type: store, m5_store: CA_1, warehouse: W1}
+    - {id: St2, type: store, m5_store: CA_2, warehouse: W1}
+  edge_mode:
+    supplier_to_warehouse: Standard Class
+    warehouse_to_store: Second Class
+  add_reverse_edges: true
+splits:
+  train: [1, 1500]
+  val: [1501, 1700]
+  test: [1701, 1941]
+sim:
+  history_window: 7        # graphs per observation (today included)
+  warmup_days: 6           # history_window - 1
+  episode_decision_days: 60
+  min_lead_time: 1
+  order_cap_multiple: 3.0  # cap = multiple x average daily demand of the node
+  start_stock_days_store: 3
+  start_stock_days_warehouse: 7
+  start_pipeline_days: [1, 2]   # pre-loaded shipments due on these days
+  cost_holding: 0.05       # per unit of end-of-day stock, every stocking node
+  cost_stockout: 1.0       # per unit short, stores only
+  cost_order_change: 0.1   # per unit of change from yesterday's order
+  reward_scale: auto       # divide by total average daily demand of the network
+  supplier_capacity: unlimited
+shocks: []                 # list of shock records (manual Section 7.3)
+baselines:
+  basestock_grid: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]   # x avg demand x (mean lead time + 1)
+  movavg_z_grid:  [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+rl:
+  embed_dim: 16
+  gat_layers: 2
+  lstm_hidden: 16
+  discount: 0.99
+  gae_lambda: 0.95
+  clip: 0.2
+  steps_per_update: 2048
+  lr: 0.0003
+  pretrain_encoder: false

@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "supply-chain-rl"
+version = "0.0.1"
+description = "Spatio-temporal graph RL for bullwhip-aware supply chain replenishment (simulation prototype)"
+requires-python = ">=3.11,<3.12"
+dependencies = ["numpy", "pyyaml"]
+
+[project.optional-dependencies]
+# Libraries for later phases are added to the matching extra when that phase starts.
+dev = ["pytest", "ruff", "mypy", "types-PyYAML", "pip-tools"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src", "tests"]
+strict = true
+warn_unreachable = true
