@@ -44,7 +44,9 @@ Phase 1 run order: `inspect_files`, then `data.dataco`, `data.build`, `graph.bui
 | `python -m supply_chain_rl.data.build` | 1 (available) |
 | `python -m supply_chain_rl.data.dataco` | 1 (available) |
 | `python -m supply_chain_rl.graph.build` | 1 (available) |
-| `python -m supply_chain_rl.sim.run --policy warmup --split train --start 100 --days 30 --seed 1` | 2 |
+| `python -m supply_chain_rl.sim.run --policy warmup --split train --start 100 --days 30 --seed 1` | 2 (available) |
+| `python -m supply_chain_rl.sim.run --policy warmup --split test --days all --seed 1 --shock shock.json` | 2 (available; baselines in 3) |
+| `python -m supply_chain_rl.sim.run --golden G-A` | 2 (available) |
 | `python -m supply_chain_rl.eval.baselines tune` | 3 |
 | `python -m supply_chain_rl.eval.run --policies basestock,movavg --seeds 20 --split test` | 3 |
 | `streamlit run app/dashboard.py` | 4 |

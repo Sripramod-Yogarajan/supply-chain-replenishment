@@ -7,7 +7,7 @@ name = "supply-chain-rl"
 version = "0.0.1"
 description = "Spatio-temporal graph RL for bullwhip-aware supply chain replenishment (simulation prototype)"
 requires-python = ">=3.11,<3.12"
-dependencies = ["numpy", "pyyaml", "pandas", "pyarrow", "networkx", "matplotlib", "plotly"]
+dependencies = ["numpy", "pyyaml", "pandas", "pyarrow", "networkx", "matplotlib", "plotly", "gymnasium"]
 
 [project.optional-dependencies]
 # Libraries for later phases are added to the matching extra when that phase starts.
