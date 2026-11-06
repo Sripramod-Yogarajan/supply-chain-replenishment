@@ -1,5 +1,7 @@
 # Build Manual and Specification for Claude Code
 
+> **Dataset-informed corrections.** This manual was written before the datasets were inspected. Where the data showed an instruction to be outdated or wrong, a minimal correction was made in place and marked *(corrected ..., see DECISIONS D-x)*. The full reasoning and evidence are in `DECISIONS.md` and `ASSUMPTIONS.md`. Everything else is unchanged.
+
 **Spatio-Temporal Graph Reinforcement Learning for Bullwhip-Aware Supply Chain Replenishment: a phased manual for building a working prototype**
 
 This document is written to be uploaded to Claude Code together with the data files. It is both a specification (what the system is and which rules it follows) and a manual (what to build, in which order, how to test it, and when a phase counts as done). The concept-level explanation of the project is in the separate project documentation; nothing here depends on reading it, but the same names and numbers are used.
@@ -71,8 +73,9 @@ Gates are stop-and-review points. G0 means the data and graph are verified. G1 m
 
 ## 3. Tech stack and repository
 
-- Python 3.11. Libraries: numpy, pandas, pyyaml, networkx, matplotlib, plotly, streamlit, gymnasium, pytest; for Phases 5 onwards: torch and torch\_geometric.
-- Hardware: the graph has 4 to 8 nodes, so a local 8 GB GPU or a Colab T4 is enough; Phases 0 to 4 need no GPU (untested assumption, check early).
+- Python 3.11. Libraries: numpy, pandas, pyarrow (parquet files), pyyaml, networkx, matplotlib, plotly, streamlit, gymnasium, pytest; for Phases 5 onwards: torch and torch\_geometric. (corrected 2026-11-06, see DECISIONS D-1, D-4)
+- Package name: the Python package is `src/supply_chain_rl/` at the repository root (no `fyp/` directory). Wherever this manual writes `fyp` (tree below, commands in Section 5), read `supply_chain_rl` (corrected 2026-11-06, see DECISIONS D-1).
+- Hardware: the graph has 4 to 8 nodes, so a local 8 GB GPU or a Colab T4 is enough; Phases 0 to 4 need no GPU (checked: the development machine has no NVIDIA GPU, so Phases 5 onwards use Colab or CPU (corrected 2026-11-06, see DECISIONS D-12)).
 
 ```
 fyp/
@@ -121,15 +124,14 @@ data:
   m5_dir: data/raw/m5
   dataco_csv: data/raw/dataco/DataCoSupplyChainDataset.csv
   dataco_encoding: latin-1
-  item_id: null            # chosen in Phase 1 and written back
-  first_day: null          # first day with a price, written in Phase 1
+  # item_id and first_day are results of Phase 1 and are written to derived.yaml, not here (corrected 2026-11-06, see DECISIONS D-3)
   min_nonzero_share: 0.9   # item selection: minimum share of non-zero sales days
 network:                   # prototype network (four nodes)
   nodes:
     - {id: S1, type: supplier}
     - {id: W1, type: warehouse, supplier: S1}
     - {id: St1, type: store, m5_store: CA_1, warehouse: W1}
-    - {id: St2, type: store, m5_store: CA_2, warehouse: W1}
+    - {id: St2, type: store, m5_store: CA_3, warehouse: W1}   # was CA_2 (corrected 2026-11-06, see DECISIONS D-10)
   edge_mode:
     supplier_to_warehouse: Standard Class
     warehouse_to_store: Second Class
@@ -146,11 +148,11 @@ sim:
   order_cap_multiple: 3.0  # cap = multiple x average daily demand of the node
   start_stock_days_store: 3
   start_stock_days_warehouse: 7
-  start_pipeline_days: [1, 2]   # pre-loaded shipments due on these days
+  start_pipeline_days: [1, 2, 3, 4]   # pre-loaded shipments due on these days; was [1, 2] (corrected 2026-11-06, see DECISIONS D-13)
   cost_holding: 0.05       # per unit of end-of-day stock, every stocking node
   cost_stockout: 1.0       # per unit short, stores only
   cost_order_change: 0.1   # per unit of change from yesterday's order
-  reward_scale: auto       # divide by total average daily demand of the network
+  reward_scale: auto       # divide by the sum of the stores' avg_d (corrected 2026-11-06, see DECISIONS D-14)
   supplier_capacity: unlimited
 shocks: []                 # list of shock records (Section 7.3)
 baselines:
@@ -206,10 +208,10 @@ M5 contains no warehouses, suppliers, delivery times, stock levels or orders. Da
 
 Produce `data/processed/item_choice.md` with the evidence. Algorithm:
 
-1. Take items of category FOODS that exist in all configured M5 stores (default CA\_1 and CA\_2).
+1. Take items of category FOODS that exist in all configured M5 stores (default CA\_1 and CA\_3; was CA\_2 (corrected 2026-11-06, see DECISIONS D-10)).
 2. For each item and store find `first_day` = the first day on which the item has a price in that store (via `wm_yr_wk`). Use the later of the stores' first days as the common start.
 3. From `first_day` to day 1941, compute the share of non-zero sales days in each store. Keep items whose share is at least `min_nonzero_share` (default 0.9) in every store.
-4. Among the survivors choose the one with the largest total sales. Write `item_id` and `first_day` back to the config.
+4. Among the survivors choose the one with the largest total sales. Write `item_id` and `first_day` to `derived.yaml` (corrected 2026-11-06, see DECISIONS D-3).
 5. Report the zero-day share for the chosen item. If no item passes, lower the threshold step by step and record it (A-id), or choose by hand with a stated reason.
 
 Background: most M5 item-store series are intermittent (many zero days, plus zeros before an item launched). A zero can mean no customer or an empty shelf; the data cannot tell which. This is a recorded limitation (sales are used as demand).
@@ -253,7 +255,7 @@ Built from `config.yaml` (never hard-coded). For the prototype:
 | 0 | S1 | supplier | unlimited stock; does not order |
 | 1 | W1 | warehouse | orders from S1; serves St1 and St2 |
 | 2 | St1 | store | M5 CA\_1 |
-| 3 | St2 | store | M5 CA\_2 |
+| 3 | St2 | store | M5 CA\_3 (corrected 2026-11-06, see DECISIONS D-10) |
 
 The order of indices is suppliers, then warehouses, then stores, in config order. Stores under one warehouse must belong to the same M5 state (assert); the warehouse takes that state's SNAP flag.
 
@@ -377,7 +379,7 @@ Hidden (default): the only changes the model can observe are consequences (stock
 
 **R6 Stock update.** Stores: `stock_end = available - sold`. Warehouses: `stock_end = stock after R3 - shipped`. Suppliers are not tracked.
 
-**R7 Costs and reward.** Per day: `holding = cost_holding * stock_end` for every stocking node (stores and warehouses); `stockout_cost = cost_stockout * stockout` for stores only; `order_change = cost_order_change * |order_today - order_yesterday|` for every ordering node (stores and warehouses). `reward = -(sum of all three over all nodes) / reward_scale`, where `reward_scale` is the total average daily demand of the network when set to `auto`, else the number given. Warm-up days are logged but excluded from learning and from metrics. On the first decision day the order-change term uses the last warm-up order.
+**R7 Costs and reward.** Per day: `holding = cost_holding * stock_end` for every stocking node (stores and warehouses); `stockout_cost = cost_stockout * stockout` for stores only; `order_change = cost_order_change * |order_today - order_yesterday|` for every ordering node (stores and warehouses). `reward = -(sum of all three over all nodes) / reward_scale`, where `reward_scale` is the sum of the stores' `avg_d` (the network's customer demand) when set to `auto`, else the number given (corrected 2026-11-06, see DECISIONS D-14). Warm-up days are logged but excluded from learning and from metrics. On the first decision day the order-change term uses the last warm-up order.
 
 **R8 Bookkeeping.** After the day: demand seen = `D` for stores, the total of store orders received today for warehouses, the total of warehouse orders received today for suppliers; `avg_demand` = mean of demand seen over the last `min(7, simulated days so far)` days (before day 1 it equals the initial value); `last_order` = today's orders.
 
@@ -413,7 +415,7 @@ class SupplyChainEnv(gymnasium.Env):
     def step(self, action): ...  # returns observation, reward, terminated, truncated, info
 ```
 
-`truncated` becomes true after `decision_days` decision days; `terminated` only if the split ends. `info` holds the per-node values of the day. The log is a tidy table with one row per run, day and node and the columns: `run_id`, `policy`, `seed`, `scenario_id`, `t`, `phase` (warmup or decision), `node`, `node_type`, `stock_start`, `delivered`, `order`, `shipped`, `unfilled`, `demand`, `sold`, `stockout`, `stock_end`, `pipeline_end`, `cost_holding`, `cost_stockout`, `cost_order_change`, `reward_day` (one value per day), `shock_active`, `shock_types`.
+`truncated` becomes true after `decision_days` decision days; `terminated` only if the split ends. `info` holds the per-node values of the day. The log is a tidy table with one row per run, day and node and the columns: `run_id`, `policy`, `seed`, `scenario_id`, `t`, `phase` (warmup or decision), `node`, `node_type`, `stock_start`, `delivered`, `order`, `shipped`, `unfilled`, `demand`, `sold`, `stockout`, `stock_end`, `pipeline_end`, `cost_holding`, `cost_stockout`, `cost_order_change`, `reward_day` (one value per day), `shock_active`, `shock_types`, `order_capped` (1 if R1 clipped the order to the cap, added (corrected 2026-11-06, see DECISIONS D-15)).
 
 ## 8. Test specification
 
@@ -479,7 +481,7 @@ Checkpoint P0: `pytest -q` passes; loading a deliberately broken config raises a
 
 **Step 1: inspect the files.** Place the M5 and DataCo files as in Section 3. Print the header of every file and the number of rows; compare with Section 6.1; record every difference in `ASSUMPTIONS.md`. Print the distinct values of `Shipping Mode` and `Delivery Status`.
 
-**Step 2: M5 tables and product choice (Section 6.2, 6.3).** Convert the wide sales table to a tidy per-store demand series using `calendar.csv`; join prices through `wm_yr_wk`; build the calendar table with `event_flag`, SNAP flags and the sine and cosine of the weekday; choose the product by the algorithm of Section 6.2 and write `item_id` and `first_day` back to the config; compute `avg_d` and `price_mean` on the training days.
+**Step 2: M5 tables and product choice (Section 6.2, 6.3).** Convert the wide sales table to a tidy per-store demand series using `calendar.csv`; join prices through `wm_yr_wk`; build the calendar table with `event_flag`, SNAP flags and the sine and cosine of the weekday; choose the product by the algorithm of Section 6.2 and write `item_id` and `first_day` to `derived.yaml` (corrected 2026-11-06, see DECISIONS D-3); compute `avg_d` and `price_mean` on the training days.
 
 Figures (saved under `reports/figures/`):
 
@@ -501,7 +503,7 @@ Figures (saved under `reports/figures/`):
 The phase passes only if every item holds, with the evidence listed in `reports/phase_1.md`:
 
 1. File headers inspected; every deviation from Section 6.1 recorded.
-2. The product is chosen by the algorithm; the zero-day share is reported and is at most `1 - min_nonzero_share`, or the lowered threshold is recorded as an assumption; `item_id` and `first_day` are in the config.
+2. The product is chosen by the algorithm; the zero-day share is reported and is at most `1 - min_nonzero_share`, or the lowered threshold is recorded as an assumption; `item_id` and `first_day` are in `derived.yaml` (corrected 2026-11-06, see DECISIONS D-3).
 3. `demand`, `price` and `calendar` tables exist for every day from `first_day`, with no missing value; the mapping from `d_` columns to dates is spot-checked against the raw files on three random days and the three comparisons are printed.
 4. The number of days with `event_flag = 1` equals the number of days where an event name is present in `calendar.csv` (both numbers printed).
 5. DataCo statistics exist for every configured mode; each pmf sums to 1 within 1e-9; two statistics are recomputed by hand on a 20-row sample and match; the delay probability of each mode is between 0 and 1.
@@ -534,7 +536,7 @@ Checkpoint P2:
 1. All golden runs G-A to G-G and all property tests pass exactly (Section 8).
 2. Two runs with the same seed produce byte-identical logs; two different seeds differ in lead-time draws.
 3. The observation on day `t` does not change when the demand of day `t` is changed (no look-ahead).
-4. A 30-day run prints a table for day 7 that matches Section 8.2 when the initial values and fixed lead times of G-A are used.
+4. A 30-day run prints a table for day 7 that matches Section 8.2 when the initial values, fixed lead times **and demand** of G-A are used (corrected 2026-11-06, see DECISIONS D-14).
 5. The log has the schema of Section 7.7 and no NaN.
 6. `reports/phase_2.md` contains one run's day-by-day table next to the hand calculation it was checked against.
 

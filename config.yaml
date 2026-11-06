@@ -31,11 +31,11 @@ sim:
   order_cap_multiple: 3.0  # cap = multiple x average daily demand of the node
   start_stock_days_store: 3
   start_stock_days_warehouse: 7
-  start_pipeline_days: [1, 2]   # pre-loaded shipments due on these days
+  start_pipeline_days: [1, 2, 3, 4]   # pre-loaded shipments due on these days (DECISIONS D-13)
   cost_holding: 0.05       # per unit of end-of-day stock, every stocking node
   cost_stockout: 1.0       # per unit short, stores only
   cost_order_change: 0.1   # per unit of change from yesterday's order
-  reward_scale: auto       # divide by total average daily demand of the network
+  reward_scale: auto       # divide by the sum of the stores' avg_d (DECISIONS D-14)
   supplier_capacity: unlimited
 shocks: []                 # list of shock records (manual Section 7.3)
 baselines:
