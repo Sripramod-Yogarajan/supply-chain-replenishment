@@ -645,9 +645,9 @@ The dashboard is a **replay**, not an input box with a number as output. The use
 
 | Component | What it shows | Data (log columns) | Interaction |
 | --- | --- | --- | --- |
-| Control panel | policy choice (one or several), scenario (control, transit delay, demand spike, price discount, combined), shock parameters (target road or stores, start day and end day inside the test stretch, size: delta\_days, k, d and u), seed, Run | scenario JSON | Run executes the missing policy and seed combinations through the runner with a progress bar; results are cached |
+| Control panel | policy choice (one or several), scenario (control, transit delay, demand spike, price discount, combined), shock parameters (target road or stores, start day and end day inside the test stretch, size: delta\_days, k, d and u; `u` is preset to 0.2 (corrected 2026-11-16, see DECISIONS D-23, D-31)), seed, Run | scenario JSON | Run executes the missing policy and seed combinations through the runner with a progress bar; results are cached |
 | Day slider and replay | the current day for every panel | `t` | slider, play, pause, speed, step back and forward; keyboard arrows |
-| Network map | layered drawing of the nodes (suppliers, warehouses, stores). Node colour by days of cover (`stock_end` divided by `avg_d`): green above 2, amber 1 to 2, red below 1; a stockout makes the node outline flash red. Edges: width proportional to units shipped that day; dots on the road for shipments on the way, each labelled with the days remaining; shipments that will arrive later than the road's mean lead time are drawn in orange; the shocked road carries a warning symbol and a dashed red line while the shock is active | `stock_end`, `shipped`, `pipeline_end`, `stockout`, `shock_active` | hover a node to see its notebook with source tags; click a node to select it for the charts |
+| Network map | layered drawing of the nodes (suppliers, warehouses, stores). Node colour by days of cover (`stock_end` divided by `avg_d`): green above 2, amber 1 to 2, red below 1; a stockout makes the node outline flash red. Edges: width proportional to units shipped that day; dots on the road for shipments on the way, each labelled with the days remaining; shipments that will arrive later than the road's mean lead time are drawn in orange; the shocked road carries a warning symbol and a dashed red line while the shock is active. Road labels give the lead-time range (2 to 6 days); the delay probability is shown as a DataCo label only, because it does not change simulated behaviour (corrected 2026-11-16, see DECISIONS D-29) | `stock_end`, `shipped`, `pipeline_end`, `stockout`, `shock_active` | hover a node to see its notebook with source tags; click a node to select it for the charts |
 | Day table (notebook) | one row per node for the chosen day and policy with the columns of Section 6.6 plus `delivered`, `shipped`, `sold`, `stockout`, the three costs; cells that changed since the previous day are highlighted; a header row gives the source tag of each column | the log for that day | policy switch |
 | Stock chart | `stock_end` over the days for each policy, for the selected node or the network total; shock window shaded; stockout days marked; a vertical line at the chosen day | `stock_end`, `stockout` | node dropdown |
 | Orders and demand chart | orders per day as bars for each policy; the demand seen as a line; the 7-day moving average of demand as a smoother line; optionally the target stock S of the moving-average baseline; shock window shaded; the bars make bullwhip visible (orders swinging more than demand) | `order`, `demand`, computed moving average | toggles for moving average and target |
@@ -661,7 +661,7 @@ Optional model-internals panels, added only after Phase 6 if time allows: the GA
 
 ### 11.4 Data flow and caching
 
-A scenario is a JSON file (shocks, split, stretch). The runner of Section 10.3 writes one log per scenario, policy and seed under `runs/<scenario_id>/<policy>/<seed>.parquet`, and `results.csv` per scenario. The dashboard loads these through a cached reader (`st.cache_data` in Streamlit); for the replay it uses the first evaluation seed, and for the KPI cards and comparison table it uses the mean and spread over all seeds from `results.csv`. Pressing Run for a scenario that is not cached runs the runner for the missing combinations and shows progress.
+A scenario is a JSON file (shocks, split, stretch). The runner of Section 10.3 writes one log per scenario, policy and seed as a CSV file under `runs/<split>/<scenario_id>/<policy>_s<seed>.csv`, and one long-format `results.csv` covering all scenarios of a call (with `metrics_runs.csv`, `paired.csv` and `run_info.json`, which records the split). The harness writes to `results/` whatever the split, so results of different splits are kept apart with `--out-dir` (corrected 2026-11-16, see DECISIONS D-31). The dashboard loads these through a cached reader (`st.cache_data` in Streamlit); for the replay it uses the first evaluation seed, and for the KPI cards and comparison table it uses the mean and spread over all seeds from `results.csv`. Pressing Run for a scenario that is not cached runs the runner for the missing combinations and shows progress.
 
 ### 11.5 Phase 4 steps
 
@@ -692,11 +692,11 @@ A scenario is a JSON file (shocks, split, stretch). The runner of Section 10.3 w
 
 Purpose: show that an agent can learn in this simulator at all, before adding graph structure.
 
-**Step 5.0: smoke test.** Use a tiny configuration (supplier S1 and one store St1, no warehouse). Train a plain PPO with a feed-forward network and compare it with the tuned base-stock baseline on validation days. This proves the plumbing (observation, action scaling, reward) at the smallest size.
+**Step 5.0: smoke test.** Use a tiny configuration: supplier S1, warehouse W1 and one store St1 (corrected 2026-11-16, see DECISIONS D-26: the config loader and the rulebook have no supplier-to-store road). Train a plain PPO with a feed-forward network and compare it with the base-stock baseline, re-tuned on training days for this network, on validation days. This proves the plumbing (observation, action scaling, reward) at the smallest size.
 
 **Step 5.1: the prototype network, flat state.** The observation is the same window of 7 daily graphs, but the node features are simply flattened and concatenated into one vector (no graph, no LSTM). Actor: a feed-forward network outputting, for each ordering node, a mean in \[0, 1\] (through a sigmoid) and a learned log standard deviation; the sampled action is clipped to \[0, 1\] and converted by R1. Critic: a feed-forward network on the same vector outputting one value.
 
-**Step 5.2: PPO loop.** Collect `steps_per_update` decision days from several independent episodes (each episode: a random training start, 6 warm-up days by R9, then `episode_decision_days` decision days). Compute returns with the `discount` and advantages with GAE (`gae_lambda`); normalise the advantages; optimise the clipped surrogate objective (`clip`) with a value loss and a small entropy bonus for a few passes over the batch; then collect new experience with the updated weights. Warm-up days are never stored for learning.
+**Step 5.2: PPO loop.** Collect `steps_per_update` decision days from several independent episodes (each episode: a random training start, 6 warm-up days by R9, then `episode_decision_days` decision days). Compute returns with the `discount` and advantages with GAE (`gae_lambda`); normalise the advantages; optimise the clipped surrogate objective (`clip`) with a value loss and a small entropy bonus for a few passes over the batch; then collect new experience with the updated weights. Warm-up days are never stored for learning. The headline model is trained without shocks; a second variant trained with random shocks is a Phase 7 experiment (corrected 2026-11-16, see DECISIONS D-27). PPO settings not listed in Section 4 (network sizes, passes per update, minibatch size, entropy and value weights, starting spread, evaluation interval, patience, update budget) are added to the `rl` block of `config.yaml` when Phase 5 starts, not hard-coded (corrected 2026-11-16, see DECISIONS D-31).
 
 **Step 5.3: selection and logging.** Every K updates, evaluate on validation days with frozen weights and no noise (5 seeds) and keep the checkpoint with the lowest validation total cost; stop after several evaluations without improvement. Save learning curves (training reward, validation total cost, fill rate, bullwhip ratio) to `reports/figures/learning_curve.png`. Save the config, the seed and the git commit with every checkpoint.
 
@@ -704,18 +704,18 @@ Purpose: show that an agent can learn in this simulator at all, before adding gr
 
 ### 12.2 Gate G2: is PPO promising?
 
-Agree the criteria with the guide before the first full run. Suggested defaults, on validation days, over 20 seeds, against the best tuned baseline:
+The criteria are fixed (corrected 2026-11-16, see DECISIONS D-25; the earlier text said "against the best tuned baseline", which is not one policy on validation days: base-stock has the lowest cost, 5,157, and moving average the highest fill rate, 92.6%). On validation days, control scenario, evaluation seeds 1 to 20:
 
-1. PPO total cost is at most 1.10 times the best baseline's.
-2. PPO fill rate is at least the best baseline's minus one percentage point.
+1. PPO total cost is at most 5,673 (1.10 times base-stock's 5,157).
+2. PPO fill rate is at least 91.6% (moving average's 92.6% minus one percentage point).
 3. PPO is clearly better than the random policy, and its learning curve is rising.
-4. (Alternative route to a pass) PPO's bullwhip ratio is lower than the best baseline's while fill rate stays within one percentage point.
+4. (Alternative route to a pass, replacing items 1 and 2) PPO's chain bullwhip ratio is lower than base-stock's 6.40, its fill rate is at least 91.6%, and its total cost is at most 6,446 (1.25 times base-stock's). The cost limit is needed because the naive warm-up rule would otherwise pass this route (bullwhip 0.99, fill 99.5%) at twice the cost.
 
 If the gate is not passed, work down this ladder, with a time box (for example two weeks) and a note of what each step changed:
 
 1. Check the simulator and the reward scale; plot a trained episode day by day.
 2. Tune learning rate, steps per update, entropy bonus and the exploration spread.
-3. Simplify: single store, shorter episodes, smaller order cap.
+3. Simplify: single store, shorter episodes, smaller order cap. The cap is rule R1 for every policy: if it changes, both baselines are re-tuned and re-run under the new cap and the change gets a D-id (corrected 2026-11-16, see DECISIONS D-31).
 4. Try reward variants (cost only; cost plus order change) and different cost ratios (experiments E4 and E8).
 5. Add features: days since the last delivery, pipeline due within one day (record as an assumption).
 6. If it still fails, make the baselines-under-shocks study the main result, report PPO honestly with its learning curves and the steps tried, and agree this with the guide.
@@ -727,11 +727,11 @@ If the gate is not passed, work down this ladder, with a time box (for example t
 Build `rl/encoder.py` with PyTorch and PyTorch Geometric:
 
 1. **Vector step:** a linear layer turning each node's 13 numbers into a vector of `embed_dim` (16).
-2. **GAT:** `gat_layers` graph attention layers applied to each day's graph, using `edge_index` and `edge_attr` (the edge features enter the attention). Keep the attention weights available for the optional dashboard panel.
+2. **GAT:** `gat_layers` graph attention layers applied to each day's graph, using `edge_index` and `edge_attr` (the edge features enter the attention). Keep the attention weights available for the optional dashboard panel. Known limitation: in the prototype the edge features are constant and the two roads differ only in `delay_prob` and `is_reverse`, so they carry almost no information; a result of 'no benefit observed' on the four-node network must be read with this in mind (corrected 2026-11-16, see DECISIONS D-29, ASSUMPTIONS A22).
 3. **LSTM:** for each node, an LSTM over its 7 daily vectors in order (shared weights across nodes); the final hidden state is the node's summary h of size `lstm_hidden` (16).
 4. **Heads:** the actor reads each ordering node's h through shared weights; the critic reads the mean of all h vectors.
 5. **Training:** the same PPO loop as Phase 5; encoder, actor and critic are trained together.
-6. **Optional pretraining** (`pretrain_encoder: true`): train the encoder with a small output layer to predict each store's next-day demand from the 7-day window (labels from M5; loss mean squared error; report MAE and RMSE on held-out days), then fine-tune with PPO. Because the encoder's input includes stock and pipeline, generate the training windows by running the simulator with the warm-up or a baseline policy.
+6. **Optional pretraining** (`pretrain_encoder: true`): train the encoder with a small output layer to predict each store's next-day demand from the 7-day window (labels from M5; loss mean squared error; report MAE and RMSE on held-out days, which are validation days, never test days (corrected 2026-11-16, see DECISIONS D-31)), then fine-tune with PPO. Because the encoder's input includes stock and pipeline, generate the training windows by running the simulator with the warm-up or a baseline policy.
 
 **Ablations** (experiments E2, E3 and E5), each with identical seeds, budget (number of updates) and selection rule: flat PPO; graph without LSTM (last day only); graph with LSTM; with and without price and calendar features; with and without pretraining.
 
@@ -751,7 +751,7 @@ Build `rl/encoder.py` with PyTorch and PyTorch Geometric:
 Steps:
 
 1. Register the trained policy as `ppo` in the evaluation runner: it loads the selected checkpoint, uses frozen weights and the mean action (no noise), and goes through the same R1 clipping and the same environment as every baseline.
-2. Run the control scenario and the shock scenarios (transit delay, demand spike, price discount, and one combined) on the test days for the baselines and PPO, 20 seeds, common random numbers. Hidden shocks only (experiment E6).
+2. Run the control scenario and the shock scenarios (transit delay, demand spike, price discount with `u = 0.2` and with `u = 0.5`, and one combined) on the test days for the baselines and PPO, 20 seeds, common random numbers. Hidden shocks only (experiment E6). The baselines' test results are those already recorded in `reports/phase_3.md`; the learned policy is evaluated on the test days once, after Gate G3, and no setting is changed afterwards. Also train a second PPO variant with random shocks in random windows on training days (never overlapping the test shock window) and compare it with the headline model, which is trained without shocks (corrected 2026-11-16, see DECISIONS D-23, D-27, D-31).
 3. Add PPO to the dashboard's policy list. Nothing else in the layout changes.
 4. Optionally add the model-internals panels of Section 11.3.
 5. Write a reproduction script that runs, in order, data build, DataCo inference, graph build, baseline tuning, evaluation and the dashboard (training is a separate flag because it is slow), and a README that shows the figures.
@@ -775,7 +775,7 @@ The prototype is complete only if every line holds:
 
 ### 13.3 Phase 8: scale-up and experiments
 
-1. Switch `config.yaml` to the eight-node network (S1, S2, W1, W2, St1 to St4 with stores CA\_1 and CA\_2 under W1 and TX\_1 and TX\_2 under W2). No code change should be needed; if one is, fix the code rather than the config. Re-run the tests, the baseline tuning and the training.
+1. Switch `config.yaml` to the eight-node network (S1, S2, W1, W2, St1 to St4 with stores CA\_1 and CA\_2 under W1 and TX\_1 and TX\_2 under W2). No code change should be needed; if one is, fix the code rather than the config. Re-run the tests, the baseline tuning and the training. (Note 2026-11-16, see DECISIONS D-28: this store list predates the replacement of CA\_2 by CA\_3 (D-10) and the TX stores are unchecked; the correction is deferred to the start of Phase 8.)
 2. Run the experiments:
 
 | # | Experiment | Question |
@@ -821,7 +821,7 @@ Add every further assumption as it arises, with its date and the phase.
 
 ### 14.2 Limitations to state in the report
 
-Sales used as demand; synthetic grafting of two unrelated datasets; simulated warehouses and suppliers; assumed discount uplift; unlimited supplier (the simulator therefore does not reproduce bullwhip caused by supply shortages at the factory); lost-sales assumption; no look-ahead of events; one product and a small network; results describe the simulated chain only; no claim about real supply chains.
+Sales used as demand; synthetic grafting of two unrelated datasets; simulated warehouses and suppliers; assumed discount uplift; unlimited supplier (the simulator therefore does not reproduce bullwhip caused by supply shortages at the factory); lost-sales assumption; both roads have the same simulated lead-time behaviour (2 to 6 days, mean 4), so the DataCo delay probability (0.40 against 0.80) is a label and the edge features carry almost no information for the graph encoder (added 2026-11-16, see DECISIONS D-29, ASSUMPTIONS A22); no look-ahead of events; one product and a small network; results describe the simulated chain only; no claim about real supply chains.
 
 ### 14.3 Risks and mitigations
 

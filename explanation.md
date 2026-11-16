@@ -152,14 +152,15 @@ supply-chain-replenishment/            ← the project folder
 |------|------------|
 | `build_manual.md` | The project's instruction book: every rule, number and phase. We follow it, but correct it (and mark the correction) where the real data proved it wrong. |
 | `pyproject.toml` | The list of software libraries the project needs (e.g. `pandas` for tables, `gymnasium` for the game interface). |
-| `requirements.lock` | An exact, frozen list of library versions. We deliberately postponed updating it until the end of the project. |
+| `requirements.lock` | An exact, frozen list of library versions. We deliberately postponed updating it until the end of the project, so for now the project is installed from `pyproject.toml` (see the README). |
+| `CLAUDE.md` | The standing rules every work session follows (one phase at a time, never tune on test days, report results as found). |
 | `config.yaml` | Every setting we chose, in one place: which stores, how long deliveries take, costs, and so on. Change a number here and the whole project follows it. |
 | `derived.yaml` | Facts **measured** from the data, not chosen by us, e.g. "the data has 1,941 days" and "the product is FOODS_3_586". Kept separate so nobody mistakes a measured fact for a tunable setting. |
 | `src/.../config.py` | Code that reads `config.yaml` and checks it makes sense (e.g. the date ranges don't overlap). |
 | `src/.../seeding.py` | Controls randomness (see *seed* below). |
 | `src/.../paths.py` | One list of where the folders are, so no file has to guess. |
-| `DECISIONS.md` | A record of every decision we made and why (D-1 to D-22). |
-| `ASSUMPTIONS.md` | A record of everything we had to assume without proof (A1 to A20). |
+| `DECISIONS.md` | A record of every decision we made and why (D-1 to D-31). |
+| `ASSUMPTIONS.md` | A record of everything we had to assume without proof (A1 to A22). |
 | `README.md` | Short "how to install and run" instructions. |
 | `.gitignore` | Tells git (the version-history tool) which files not to save, e.g. the large datasets. |
 
@@ -256,7 +257,7 @@ The manual numbers these rules **R1 to R12** (R11 and R12 are the Phase 3 baseli
 - **Shock:** a surprise event used to test robustness:
   - *transit delay:* deliveries on a route take 3 extra days;
   - *demand spike:* customers suddenly buy 1.5× more;
-  - *price discount:* the price drops, so customers buy more (the size of that uplift, `u`, is still to be decided).
+  - *price discount:* the price drops, so customers buy more. The size of that uplift, `u`, is 0.2 (20% more sales for a 20% discount), estimated from real price cuts of other food items in M5; because that estimate is uncertain, 0.5 is run as a second case.
 - **Costs** (how a day is judged):
 
   | Cost | Rate | Meaning |
@@ -391,13 +392,27 @@ So `bullwhip_chain_mean` = "the average whole-chain bullwhip over 20 runs", and 
 - This holds under changed settings too (the sensitivity check).
 - **Target for the learning computer:** match about 5,330 cost at about 97.7% fill rate, with bullwhip below 3.3.
 
+### What the reproduction added (`reports/reproduction.md`)
+
+All of Phases 0 to 3 were re-run from the raw files and every number came out the same. The same three policies were also scored on the **validation** days, which the learning computer will use for its "mock exam":
+
+| Validation days | Naive | Base-stock | Moving-average |
+|---|------:|-----------:|---------------:|
+| Total cost | 10,861 | 5,157 | 5,394 |
+| Fill rate | 99.5% | 90.0% | 92.6% |
+| Chain bullwhip | 1.0 | 6.4 | 19.6 |
+
+- Customers bought about 8% **more** than the training average on the validation days and about 8% **less** on the test days. Base-stock's fixed target is therefore too low on validation days (worse service than moving-average) and too high on test days (better service). Which rule serves customers better depends on the period; base-stock is cheaper or equal in both, and always calmer.
+- **The mock-exam pass mark (Gate G2, decision D-25):** on validation days the learning computer must cost at most 5,673 (10% above base-stock) and fill at least 91.6% of demand (one point below moving-average).
+- In the simulation both delivery routes behave the same (2 to 6 days, each equally likely). The "80% late" figure for the warehouse-to-store route is a label from the shipping data and does not make that route slower here (a recorded limitation, A22).
+
 ---
 
 ## Folders that support every phase
 
 | Folder / file | Purpose |
 |---------------|---------|
-| `tests/` | 154 automatic checks. Each test file checks one part, e.g. `test_rules.py` the game rules, `test_metrics.py` the scores, `test_policies.py` the baselines. Running `pytest` re-checks everything in seconds, so a later change can't silently break earlier work. |
+| `tests/` | 163 automatic checks. Each test file checks one part, e.g. `test_rules.py` the game rules, `test_metrics.py` the scores, `test_policies.py` the baselines. Running `pytest` re-checks everything in seconds, so a later change can't silently break earlier work. |
 | `reports/phase_N.md` | A plain-language report at the end of each phase: what was built, the evidence it works, and the decisions made. |
 | `DECISIONS.md` / `ASSUMPTIONS.md` | The project's memory: why things are the way they are. |
 
@@ -408,9 +423,9 @@ So `bullwhip_chain_mean` = "the average whole-chain bullwhip over 20 runs", and 
 | Phase | Folder | What and why |
 |:-----:|--------|--------------|
 | 4 | `app/` | **A dashboard:** a visual screen to replay a run day by day (stock levels, orders, shocks), so anyone can see what happened instead of reading tables. |
-| 5 | `src/.../rl/` | **First learning computer (PPO):** trained in the game on the training days, reading the 13 numbers per node as a flat list. PPO is a standard, reliable learning method. |
+| 5 | `src/.../rl/` | **First learning computer (PPO):** trained in the game on the training days, reading the 13 numbers per node as a flat list. PPO is a standard, reliable learning method. It starts with a tiny trial network (supplier, warehouse, one store) and is trained without shocks; it passes if it meets the Gate G2 pass mark above. |
 | 6 | `src/.../rl/` | **The special version:** the same learner, but reading the network as a map (a **GAT**, Graph Attention Network) and the last 7 days as a sequence (an **LSTM**, a memory component). We compare it with Phase 5 to find out whether "seeing the network" really helps. |
-| 7–8 | everything | Combine it all, run the final tests with shocks, and write up the results. |
+| 7–8 | everything | Combine it all, run the final tests with shocks, and write up the results. Phase 7 also trains a second version that practises with random shocks, to see whether that helps. |
 
 ---
 

@@ -13,12 +13,16 @@ Results describe a simulated chain only.
 ```
 py -3.11 -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.lock
-pip install -e . --no-deps
+pip install -e ".[dev]"
 ```
 
-Updating dependencies: edit `pyproject.toml`, then
+`pyproject.toml` is the source of truth for dependencies. `requirements.lock` still lists only
+the Phase 0 packages (D-11), so it cannot build a working environment and is not used for setup
+until it is regenerated (D-30). Versions after Phase 0 are therefore not pinned; the versions of
+the last full reproduction are listed in `reports/reproduction.md`. To regenerate the lockfile:
 `pip-compile --extra dev --generate-hashes -o requirements.lock pyproject.toml`.
+
+Standing rules for every session are in [`CLAUDE.md`](CLAUDE.md).
 
 ## Checks
 
@@ -35,7 +39,7 @@ mypy
 
 Phase 1 run order: `inspect_files`, then `data.dataco`, `data.build`, `graph.build` (outputs in `data/processed/` and `reports/figures/`, not committed).
 
-Phase 3 run order: `eval.baselines tune` (about 4 min, 10 processes), then `eval.run` (about 30 s) and `eval.sensitivity` (about 10 min). Outputs in `results/` and `runs/`, not committed (D-22).
+Phase 3 run order: `eval.baselines tune` (2 to 4 min, 10 processes), then `eval.run` (20 to 50 s) and `eval.sensitivity` (4 to 5 min). Outputs in `results/` and `runs/`, not committed (D-22). `eval.run` writes to `results/` whatever the split: for validation days add `--split val --scenarios control --out-dir results/val`, so the test results are not overwritten.
 
 ## Commands (target interface; `fyp` in the manual is `supply_chain_rl` here)
 

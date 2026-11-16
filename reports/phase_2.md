@@ -67,8 +67,12 @@ St2 1.20, W1 7.75; reward −10.85. These are the manual's values.
 - Average stock: St1 4.0 days, St2 3.2 days, W1 7.5 days of demand. Holding is 93% of costs,
   order changes 7% and stockouts 0.1%. The warm-up rule is a poor policy (too much stock), which
   leaves room for the baselines and the agent.
-- A 3-day transit delay on W1→St1 (days 1750 to 1759) drops St1's lowest stock in the window
-  from 93 to 17 units without a stockout.
+- A 3-day transit delay on W1→St1 (days 1750 to 1759) ~~drops St1's lowest stock in the window
+  from 93 to 17 units without a stockout.~~ lowers St1's stock without a stockout: without the
+  delay the lowest end-of-day stock in the window is 93; with it the lowest is 48 inside the
+  window and 17 on day 1762, three days after the window, because shipments delayed on the last
+  shock days arrive after it ends. *(corrected 2026-11-16, see `reports/reproduction.md` 3.2 and
+  DECISIONS D-30: the numbers were right, "in the window" was not)*
 
 ## Decisions and assumptions made in this phase
 
