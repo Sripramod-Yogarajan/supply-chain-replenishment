@@ -137,3 +137,34 @@ def test_levels_and_chain_bullwhip() -> None:
     assert m["bullwhip_warehouses"] == pytest.approx(50 / 8)
     assert m["bullwhip_chain"] == pytest.approx(50 / 2)
     assert math.isnan(m["bullwhip_St2"])  # constant demand: ratio undefined, not infinite
+
+
+def test_window_metrics_on_fixture_GH() -> None:
+    """DECISIONS D-32 (b): fill rate, stockout units and cost before, during and after the
+    window (days 5 and 6 of fixture G-H), computed by hand; the parts add up to the whole run
+    (R5 sales, R7 costs). No bullwhip ratio is computed per window."""
+    m = run_metrics(gh_log("basestock"), cost_holding=0.05, cost_stockout=1.0, shock_window=(5, 6))
+    # before: days 1-4, demand 54 all sold, stock 17+16+16+13 = 62 -> 3.10
+    assert (m["days_before"], m["stockout_units_before"]) == (4, 0)
+    assert m["fill_rate_before"] == 1.0
+    assert m["total_cost_before"] == pytest.approx(3.10)
+    assert m["cost_per_day_before"] == pytest.approx(0.775)
+    # during: days 5-6, demand 41, 1 short, stock 6+0 -> 0.30 + 1.00
+    assert (m["days_during"], m["stockout_units_during"]) == (2, 1)
+    assert m["fill_rate_during"] == pytest.approx(40 / 41)
+    assert m["total_cost_during"] == pytest.approx(1.30)
+    assert m["cost_per_day_during"] == pytest.approx(0.65)
+    # after: days 7-10, demand 53 all sold, stock 1+10+16+16 = 43 -> 2.15
+    assert (m["days_after"], m["stockout_units_after"]) == (4, 0)
+    assert m["fill_rate_after"] == 1.0
+    assert m["total_cost_after"] == pytest.approx(2.15)
+    parts = sum(m[f"total_cost_{w}"] for w in ("before", "during", "after"))
+    assert parts == pytest.approx(m["total_cost"]) == pytest.approx(6.55)
+    assert m["cost_per_day"] == pytest.approx(0.655)
+    assert not [k for k in m if "bullwhip" in k and k.endswith(("_before", "_during", "_after"))]
+    # the variances behind the bullwhip ratio (manual 10.2): 8.96 and 8.24
+    assert m["var_customer_demand"] == pytest.approx(8.96)
+    assert m["var_store_orders"] == pytest.approx(8.24)
+    assert m["bullwhip_stores"] == pytest.approx(m["var_store_orders"] / m["var_customer_demand"])
+    # without a window there are no window metrics
+    assert "fill_rate_during" not in run_metrics(gh_log("ppo"), 0.05, 1.0)

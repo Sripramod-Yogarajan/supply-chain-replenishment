@@ -148,6 +148,13 @@ class SupplyChainEnv(gym.Env[dict[str, np.ndarray], np.ndarray]):
         )
         self.log_rows: list[dict[str, Any]] = []
         self.shipments: list[dict[str, Any]] = []
+        # start-up pipeline (tag C), kept apart from the shipments made by the rules (D-40)
+        self.initial_shipments: list[dict[str, Any]] = [
+            {"t": start - 1, "road": self.topo.road[n], "dest": n, "qty": q,
+             "lead_time": due - (start - 1), "arrival": due, "initial": 1}
+            for n in self.topo.stocking
+            for due, q in self.nb.pipeline[n]
+        ]  # fmt: skip
         self.state_tables: dict[int, list[dict[str, Any]]] = {}
         self._buffer: deque[np.ndarray] = deque(maxlen=self.window)
         self.decisions_done = 0
@@ -334,6 +341,16 @@ class SupplyChainEnv(gym.Env[dict[str, np.ndarray], np.ndarray]):
     def log_frame(self) -> pd.DataFrame:
         """The run log so far (manual 7.7 schema plus ``order_capped``)."""
         return logs.to_frame(self.log_rows)
+
+    def shipments_frame(self) -> pd.DataFrame:
+        """Every shipment of the run so far, start-up pipeline first (D-32 c; logging only)."""
+        rows = [
+            {**self.labels, "dest": s["road"].split("->")[1], "initial": 0, **s}
+            for s in self.shipments
+        ]
+        return logs.shipments_to_frame(
+            [{**self.labels, **s} for s in self.initial_shipments] + rows
+        )
 
     @property
     def notebook(self) -> Notebook:

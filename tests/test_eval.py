@@ -160,3 +160,44 @@ def test_with_overrides_revalidates(raw_config: dict[str, Any]) -> None:
     assert c2.section("sim")["cost_stockout"] == 2.0 and cfg.section("sim")["cost_stockout"] == 1.0
     with pytest.raises(ConfigError):
         with_overrides(cfg, {"sim": {"warmup_days": 3}})
+
+
+def test_harness_writes_scenario_json_and_results_per_split(
+    raw_config: dict[str, Any], tmp_path: Any
+) -> None:
+    """DECISIONS D-32 (a): results name their split; every scenario folder holds a
+    ``scenario.json`` and one shipments table per run; an extra scenario runs like the rest."""
+    import json
+
+    from supply_chain_rl.eval.run import write_results
+    from supply_chain_rl.eval.scenarios import Scenario
+
+    cfg, data = _setup(raw_config, window=(95, 104))
+    tuned = {"basestock": {"m_store": 1.3, "m_warehouse": 1.1}}
+    extra = Scenario("both", [
+        {"id": "a", "type": "transit_delay", "target": "W1->St1", "delta_days": 2,
+         "start_day": 95, "end_day": 99},
+        {"id": "b", "type": "demand_spike", "target": ["St2"], "k": 1.5,
+         "start_day": 98, "end_day": 104},
+    ])  # fmt: skip
+    runs = evaluate(cfg, data, ["basestock"], tuned, [1, 2], "test", ["control", "both"],
+                    tmp_path / "runs" / "test", extra={"both": extra})  # fmt: skip
+    assert sorted(runs["scenario"].unique()) == ["both", "control"]
+    rec = json.loads((tmp_path / "runs" / "test" / "both" / "scenario.json").read_text("utf-8"))
+    assert rec["split"] == "test" and rec["window"] == [95, 104] and rec["seeds"] == [1, 2]
+    assert [s["type"] for s in rec["shocks"]] == ["transit_delay", "demand_spike"]
+    assert rec["days"] == [81, DAYS] and rec["config_hash"] == cfg.hash()
+    control = json.loads(
+        (tmp_path / "runs" / "test" / "control" / "scenario.json").read_text("utf-8")
+    )
+    assert control["shocks"] == [] and control["window"] == [95, 104]
+    for seed in (1, 2):
+        assert (tmp_path / "runs" / "test" / "both" / f"basestock_s{seed}.csv").is_file()
+        assert (tmp_path / "runs" / "test" / "both" / f"basestock_s{seed}_shipments.csv").is_file()
+    out = tmp_path / "results" / "test"
+    summary = write_results(runs, out, "test", {"seeds": [1, 2]})
+    on_disk = pd.read_csv(out / "results.csv")
+    assert list(on_disk.columns) == ["split", "scenario", "policy", "metric", "mean", "std", "n"]
+    assert (on_disk["split"] == "test").all() and len(on_disk) == len(summary)
+    assert json.loads((out / "run_info.json").read_text("utf-8"))["split"] == "test"
+    assert not (out / "paired.csv").exists()  # only one of the two baselines was run

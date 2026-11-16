@@ -63,3 +63,18 @@ rl:
   steps_per_update: 2048
   lr: 0.0003
   pretrain_encoder: false
+dashboard:                 # Phase 4 simulation dashboard (DECISIONS D-33, D-39, D-41)
+  replay_seed: 1           # the run that is replayed; KPI cards use all evaluation seeds
+  reference_policy: basestock   # KPI differences are shown against this policy (D-33 b)
+  # Map colours by days of cover = end-of-day stock / the node's average daily demand on training
+  # days. Chosen from training and validation days (D-39): below `critical` a store stocks out the
+  # next day in 29 to 49% of cases and a warehouse rations in 57 to 84%; at or above `low` in 0 to 3%
+  # (stores) and 7 to 11% (base-stock warehouse).
+  cover_days:
+    store:     {critical: 1.0, low: 1.5}
+    warehouse: {critical: 0.25, low: 1.0}
+  play_speeds: [1, 2, 5]   # simulated days per second (target)
+  chart_window_days: 60    # width of the charts' follow-the-day view
+  # Custom shocks are demonstration only (D-41). A learned policy is added to this list only after
+  # its single official evaluation on the test days.
+  custom_policies: [warmup, basestock, movavg]

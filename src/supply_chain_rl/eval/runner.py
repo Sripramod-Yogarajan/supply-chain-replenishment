@@ -82,6 +82,10 @@ def score(
             from supply_chain_rl.sim.logs import write_log
 
             write_log(log, log_dir / scenario_id / f"{policy_name}_s{seed}.csv")
+            write_log(  # D-32 (c): the shipments behind the log, for the dashboard's map
+                env.shipments_frame(),
+                log_dir / scenario_id / f"{policy_name}_s{seed}_shipments.csv",
+            )
         m = run_metrics(log, sim["cost_holding"], sim["cost_stockout"], window)
         rows.append({"policy": policy_name, "scenario": scenario_id, "seed": seed,
                      **policy.params(), **m})  # fmt: skip

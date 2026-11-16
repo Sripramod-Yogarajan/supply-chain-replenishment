@@ -1,0 +1,18 @@
+# Theme of the simulation dashboard (Phase 4). Colours match supply_chain_rl/dashboard/theme.py.
+[theme]
+base = "light"
+primaryColor = "#0072B2"
+backgroundColor = "#F5F6F8"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1F2933"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = true
+
+[browser]
+gatherUsageStats = false
+
+[server]
+runOnSave = false

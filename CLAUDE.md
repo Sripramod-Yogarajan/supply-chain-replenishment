@@ -1,7 +1,7 @@
 # Standing rules for every session
 
 Project: supply-chain replenishment with a PPO agent and a GAT + LSTM encoder, M5 demand and
-DataCo lead times. Phases 0 to 3 are built and Gate G1 is passed. The state of the results and the
+DataCo lead times. Phases 0 to 4 are built and Gate G1 is passed. The state of the results and the
 open corrections to the manual are in `reports/reproduction.md`.
 
 ## Order of trust
@@ -53,6 +53,7 @@ When sources disagree, trust them in this order:
 
 - Environment: Python 3.11, `.venv`. `requirements.lock` lists only the Phase 0 packages (D-11);
   install with `pip install -e ".[dev]"` until the lockfile is regenerated.
-- `python -m supply_chain_rl.eval.run` writes to `results/` whatever the split. Use
-  `--out-dir results/val` for validation runs so the test results are not overwritten.
+- `python -m supply_chain_rl.eval.run` writes to `results/<split>/` (D-32); the tuned parameters
+  and sensitivity tables stay in `results/`. The dashboard (`streamlit run app/dashboard.py`)
+  only reads these files and `runs/<split>/`.
 - `data/`, `results/`, `runs/` and `reports/figures/` are not committed (D-5, D-22).

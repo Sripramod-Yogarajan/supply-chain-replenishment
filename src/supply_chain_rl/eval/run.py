@@ -4,12 +4,14 @@
 
 Runs every policy for every seed and scenario over the whole split (6 warm-up days with R9, then
 decision days), with the same seeds for every policy (common random numbers), stores each log
-under ``runs/<split>/<scenario>/``, and writes:
+under ``runs/<split>/<scenario>/`` (with its shipments table and one ``scenario.json`` per
+scenario), and writes to ``results/<split>/`` (DECISIONS D-32 a: one folder per split, and every
+file names its split, so runs on different splits cannot overwrite each other):
 
-- ``results/metrics_runs.csv``: one row per policy, scenario and seed (every metric of 10.2);
-- ``results/results.csv``: mean and standard deviation over seeds (long format);
-- ``results/paired.csv``: base-stock minus moving-average per seed (when both are run);
-- ``results/run_info.json``: seeds, tuned parameters, config hash and the runtime.
+- ``metrics_runs.csv``: one row per policy, scenario and seed (every metric of 10.2);
+- ``results.csv``: mean and standard deviation over seeds (long format);
+- ``paired.csv``: base-stock minus moving-average per seed (when both are run);
+- ``run_info.json``: seeds, tuned parameters, config hash and the runtime.
 
 Tuned parameters are read from ``results/baselines_tuned.json`` (``eval.baselines tune``).
 Scenarios whose size is not configured yet are skipped with a notice.
@@ -20,7 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +30,7 @@ import pandas as pd
 
 from supply_chain_rl.config import Config, load_config
 from supply_chain_rl.eval.runner import RESULTS, eval_seeds, load_tuned, score
-from supply_chain_rl.eval.scenarios import scenarios
+from supply_chain_rl.eval.scenarios import Scenario, scenarios
 from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH, ROOT
 from supply_chain_rl.sim.data import SimData, load_sim_data
 
@@ -47,9 +49,14 @@ def evaluate(
     scenario_ids: Sequence[str] | None = None,
     log_root: Path | None = None,
     progress: Any = None,
+    extra: Mapping[str, Scenario] | None = None,
 ) -> pd.DataFrame:
-    """Metrics rows for every policy x scenario x seed."""
-    all_sc = scenarios(cfg)
+    """Metrics rows for every policy x scenario x seed.
+
+    ``extra`` adds scenarios that are not in ``config.yaml`` (the dashboard's custom shocks,
+    DECISIONS D-41); they run through exactly the same code as the configured ones.
+    """
+    all_sc = {**scenarios(cfg), **(extra or {})}
     chosen = scenario_ids or list(all_sc)
     rows: list[dict[str, Any]] = []
     for sid in chosen:
@@ -58,6 +65,8 @@ def evaluate(
             if progress:
                 progress(f"skip scenario {sid}: {sc.pending}")
             continue
+        if log_root is not None:
+            write_scenario(log_root / sid / "scenario.json", sc, split, seeds, cfg)
         for p in policies:
             t0 = time.perf_counter()
             rows += score(cfg, data, p, tuned.get(p) if p != "warmup" else None, seeds, split,
@@ -65,6 +74,46 @@ def evaluate(
             if progress:
                 progress(f"  {sid:<15} {p:<10} {len(seeds)} seeds {time.perf_counter() - t0:.1f} s")
     return pd.DataFrame(rows)
+
+
+def scenario_record(sc: Scenario, split: str, seeds: Sequence[int], cfg: Config) -> dict[str, Any]:
+    """The scenario as JSON (manual 11.4): what was run, on which days, under which config."""
+    lo, hi = cfg.splits[split]
+    return {"id": sc.id, "split": split, "days": [lo, hi],
+            "warmup_days": int(cfg.section("sim")["warmup_days"]),
+            "window": list(sc.window) if sc.window else None,
+            "shocks": [dict(s) for s in sc.shocks], "seeds": list(seeds),
+            "config_hash": cfg.hash()}  # fmt: skip
+
+
+def write_scenario(path: Path, sc: Scenario, split: str, seeds: Sequence[int], cfg: Config) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rec = scenario_record(sc, split, seeds, cfg)
+    path.write_text(json.dumps(rec, indent=1) + "\n", encoding="utf-8")
+
+
+def write_results(
+    runs: pd.DataFrame, out_dir: Path, split: str, info: Mapping[str, Any]
+) -> pd.DataFrame:
+    """Write the result files of one call into ``out_dir`` and return the summary.
+
+    Every table carries a leading ``split`` column and ``run_info.json`` records it (D-32 a).
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    summary = summarise(runs)
+    runs.assign(split=split)[["split", *runs.columns]].to_csv(
+        out_dir / "metrics_runs.csv", index=False
+    )
+    summary.assign(split=split)[["split", *summary.columns]].to_csv(
+        out_dir / "results.csv", index=False
+    )
+    if {"basestock", "movavg"} <= set(runs["policy"]):
+        pr = paired(runs, "basestock", "movavg")
+        pr.assign(split=split)[["split", *pr.columns]].to_csv(out_dir / "paired.csv", index=False)
+    full = {"split": split, **info, "scenarios": sorted(runs["scenario"].unique().tolist()),
+            "runs": len(runs)}  # fmt: skip
+    (out_dir / "run_info.json").write_text(json.dumps(full, indent=1), encoding="utf-8")
+    return summary
 
 
 def summarise(runs: pd.DataFrame) -> pd.DataFrame:
@@ -126,7 +175,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--seeds", type=int, default=None, help="number of seeds (1..n)")
     ap.add_argument("--split", choices=("train", "val", "test"), default="test")
     ap.add_argument("--scenarios", default=None, help="comma list (default: all configured)")
-    ap.add_argument("--out-dir", type=Path, default=RESULTS)
+    ap.add_argument("--out-dir", type=Path, default=None,
+                    help="default: results/<split> (DECISIONS D-32)")  # fmt: skip
     ap.add_argument("--no-logs", action="store_true", help="do not write per-run logs")
     args = ap.parse_args(argv)
 
@@ -135,29 +185,22 @@ def main(argv: list[str] | None = None) -> None:
     policies = args.policies.split(",")
     tuned = load_tuned() if any(p != "warmup" for p in policies) else {}
     seeds = eval_seeds(cfg, args.seeds)
+    out_dir: Path = args.out_dir or RESULTS / args.split
     log_root = None if args.no_logs else ROOT / "runs" / args.split
     t0 = time.perf_counter()
     runs = evaluate(cfg, data, policies, tuned, seeds, args.split,
                     args.scenarios.split(",") if args.scenarios else None, log_root, print)  # fmt: skip
     elapsed = time.perf_counter() - t0
-    summary = summarise(runs)
-
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    runs.to_csv(args.out_dir / "metrics_runs.csv", index=False)
-    summary.to_csv(args.out_dir / "results.csv", index=False)
-    info = {"split": args.split, "seeds": seeds, "policies": policies, "tuned": tuned,
-            "scenarios": sorted(runs["scenario"].unique().tolist()), "config_hash": cfg.hash(),
-            "runs": len(runs), "seconds": round(elapsed, 1)}  # fmt: skip
-    (args.out_dir / "run_info.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
+    info = {"seeds": seeds, "policies": policies, "tuned": tuned, "config_hash": cfg.hash(),
+            "seconds": round(elapsed, 1)}  # fmt: skip
+    summary = write_results(runs, out_dir, args.split, info)
 
     with pd.option_context("display.width", 250, "display.max_columns", 30):
         print(headline(summary).to_string())
         if {"basestock", "movavg"} <= set(policies):
-            pr = paired(runs, "basestock", "movavg")
-            pr.to_csv(args.out_dir / "paired.csv", index=False)
             print("\nPaired over seeds (common random numbers):")
-            print(pr.round(4).to_string(index=False))
-    print(f"\n{len(runs)} runs in {elapsed:.1f} s -> {args.out_dir / 'results.csv'}")
+            print(paired(runs, "basestock", "movavg").round(4).to_string(index=False))
+    print(f"\n{len(runs)} runs in {elapsed:.1f} s -> {out_dir / 'results.csv'}")
 
 
 if __name__ == "__main__":

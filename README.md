@@ -39,7 +39,9 @@ mypy
 
 Phase 1 run order: `inspect_files`, then `data.dataco`, `data.build`, `graph.build` (outputs in `data/processed/` and `reports/figures/`, not committed).
 
-Phase 3 run order: `eval.baselines tune` (2 to 4 min, 10 processes), then `eval.run` (20 to 50 s) and `eval.sensitivity` (4 to 5 min). Outputs in `results/` and `runs/`, not committed (D-22). `eval.run` writes to `results/` whatever the split: for validation days add `--split val --scenarios control --out-dir results/val`, so the test results are not overwritten.
+Phase 3 run order: `eval.baselines tune` (2 to 4 min, 10 processes), then `eval.run` (20 to 50 s) and `eval.sensitivity` (4 to 5 min). Outputs in `results/` and `runs/`, not committed (D-22). `eval.run` writes to `results/<split>/` (D-32), so runs on different splits cannot overwrite each other; for validation days use `--split val --scenarios control`. The tuned parameters and the sensitivity tables stay in `results/`.
+
+Phase 4 run order: `eval.run` for the test split (the dashboard replays its logs, shipments tables and results), then `streamlit run app/dashboard.py`. `python -m supply_chain_rl.dashboard.timing` prints the slider-update times; `python -m supply_chain_rl.dashboard.screenshots` saves `reports/figures/dashboard_*.png` (uses the installed Edge or Chrome). Logs written before Phase 4 have no shipments table: re-run `eval.run` once.
 
 ## Commands (target interface; `fyp` in the manual is `supply_chain_rl` here)
 
@@ -57,7 +59,9 @@ Phase 3 run order: `eval.baselines tune` (2 to 4 min, 10 processes), then `eval.
 | `python -m supply_chain_rl.eval.baselines tune` | 3 (available) |
 | `python -m supply_chain_rl.eval.run --policies warmup,basestock,movavg --seeds 20 --split test` | 3 (available) |
 | `python -m supply_chain_rl.eval.sensitivity` | 3 (available) |
-| `streamlit run app/dashboard.py` | 4 |
+| `streamlit run app/dashboard.py` | 4 (available: simulation dashboard, replay of the logs) |
+| `python -m supply_chain_rl.dashboard.timing` | 4 (available) |
+| `python -m supply_chain_rl.dashboard.screenshots` | 4 (available) |
 | `python -m supply_chain_rl.rl.train --mode flat` / `--mode graph` | 5 / 6 |
 
 ## Data
