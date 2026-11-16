@@ -35,6 +35,8 @@ mypy
 
 Phase 1 run order: `inspect_files`, then `data.dataco`, `data.build`, `graph.build` (outputs in `data/processed/` and `reports/figures/`, not committed).
 
+Phase 3 run order: `eval.baselines tune` (about 4 min, 10 processes), then `eval.run` (about 30 s) and `eval.sensitivity` (about 10 min). Outputs in `results/` and `runs/`, not committed (D-22).
+
 ## Commands (target interface; `fyp` in the manual is `supply_chain_rl` here)
 
 | Command | Phase |
@@ -45,10 +47,11 @@ Phase 1 run order: `inspect_files`, then `data.dataco`, `data.build`, `graph.bui
 | `python -m supply_chain_rl.data.dataco` | 1 (available) |
 | `python -m supply_chain_rl.graph.build` | 1 (available) |
 | `python -m supply_chain_rl.sim.run --policy warmup --split train --start 100 --days 30 --seed 1` | 2 (available) |
-| `python -m supply_chain_rl.sim.run --policy warmup --split test --days all --seed 1 --shock shock.json` | 2 (available; baselines in 3) |
+| `python -m supply_chain_rl.sim.run --policy basestock --split test --days all --seed 1 --shock shock.json` | 2/3 (available: warmup, basestock, movavg) |
 | `python -m supply_chain_rl.sim.run --golden G-A` | 2 (available) |
-| `python -m supply_chain_rl.eval.baselines tune` | 3 |
-| `python -m supply_chain_rl.eval.run --policies basestock,movavg --seeds 20 --split test` | 3 |
+| `python -m supply_chain_rl.eval.baselines tune` | 3 (available) |
+| `python -m supply_chain_rl.eval.run --policies warmup,basestock,movavg --seeds 20 --split test` | 3 (available) |
+| `python -m supply_chain_rl.eval.sensitivity` | 3 (available) |
 | `streamlit run app/dashboard.py` | 4 |
 | `python -m supply_chain_rl.rl.train --mode flat` / `--mode graph` | 5 / 6 |
 

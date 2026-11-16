@@ -8,6 +8,7 @@ __pycache__/
 data/raw/*
 data/processed/*
 runs/*
+results/
 reports/figures/
 !**/.gitkeep
 .env

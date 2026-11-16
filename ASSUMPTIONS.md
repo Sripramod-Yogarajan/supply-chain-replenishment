@@ -23,6 +23,10 @@ Anything uncertain is recorded here with an id instead of being decided silently
 | A16 | 2 | Common random numbers (R10) are a table `U[t, road]` over all calendar days, so a seed fixes the lead time of each road on each calendar day, whatever the policy and start day. `reset(seed=None)` draws the next episode seed from a seeded stream, so unseeded training episodes differ but are reproducible. | Implements manual 7.4 R10 and 0.1. | open |
 | A17 | 2 | Shocks active during warm-up days are applied there too (rules always apply); the observation of a day already includes that day's S3 price, which the manual says the model may see. | Manual 7.2 lists 'observe' before 'apply shocks'; the S3 price is the one exception it allows. | open |
 
+| A18 | 3 | The baselines' "mean lead time into n" (R11, R12) is the mean of the R10 draw for the road's shipping mode (the DataCo pmf after clipping to `min_lead_time`): 3.99 days on both roads, so the coverage is 4.99 days. Shocks are hidden, so the baselines do not adjust it during a delay. | The manual names the quantity but not its source; this is the same number the simulator uses. | open |
+| A19 | 3 | Bullwhip "per level" sums the orders and the demand seen of the level's nodes per day before taking variances; `bullwhip_chain` = variance of the warehouses' orders / variance of total customer demand. A node with constant demand has an undefined (NaN) ratio. `unfilled_units` sums the unfilled part of every request, so a store that asks again for units it did not get is counted again: it measures rationing pressure, not lost units. | Manual 10.2 says "per level" without saying how two stores are combined. | open |
+| A20 | 3 | Days to recover is computed for the control too, over the same window; even without a shock it is 2.5 to 3.8 days, because store stock fluctuates around its average. A shock's recovery effect is therefore read as the difference from the control. | Found in the Phase 3 results. | open |
+
 Planned entries for later phases (from the manual, not yet decided): price-discount demand
 uplift `u` (S3).
 

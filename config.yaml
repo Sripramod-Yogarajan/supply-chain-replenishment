@@ -41,6 +41,15 @@ shocks: []                 # list of shock records (manual Section 7.3)
 baselines:
   basestock_grid: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]   # x avg demand x (mean lead time + 1)
   movavg_z_grid:  [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+  refine_step: 0.05        # fine search within one coarse step of the best value (DECISIONS D-19)
+  tuning_seeds: [101, 102, 103, 104, 105]   # training days only; evaluation uses seeds 1..n_eval_seeds
+  tuning_objective: total_cost   # holding + stockout (manual 10.2); full_cost adds order changes (D-19)
+scenarios:                 # Phase 3 evaluation scenarios on the test days (manual 10.3), one shock each
+  window: [1750, 1759]     # inclusive shock days (43 decision days before, 182 after)
+  shocks:
+    transit_delay:  {type: transit_delay, target: W1->St1, delta_days: 3}
+    demand_spike:   {type: demand_spike, target: [St1], k: 1.5}
+    price_discount: {type: price_discount, target: [St1], d: 0.2, u: null}   # u pending (ASSUMPTIONS A14)
 rl:
   embed_dim: 16
   gat_layers: 2

@@ -32,7 +32,7 @@
 
 ### Day 7 of G-A (printed by the simulator)
 
-```
+```text
            type     stock  pipeline_total demand_yday  avg_demand order_yday
 S1     supplier         -               -     24 [R8]  21.67 [R8]          -
 W1    warehouse  150 [R6]  66 [R3/R4/R10]     22 [R8]  21.67 [R8]    24 [R9]

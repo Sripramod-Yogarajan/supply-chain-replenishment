@@ -3,11 +3,11 @@
 Examples::
 
     python -m supply_chain_rl.sim.run --policy warmup --split train --start 100 --days 30 --seed 1
-    python -m supply_chain_rl.sim.run --policy warmup --split test --days all --seed 1 --shock shock.json
+    python -m supply_chain_rl.sim.run --policy basestock --split test --days all --seed 1 --shock shock.json
     python -m supply_chain_rl.sim.run --golden G-A      # manual golden run, prints day 7
 
-Only the warm-up policy (R9 on every day) exists in Phase 2; the baselines arrive in Phase 3 and
-use the same environment through ``action_mode="units"``.
+Policies: ``warmup`` (R9 on every day), ``basestock`` (R11) and ``movavg`` (R12) with the tuned
+parameters of ``results/baselines_tuned.json``. All use ``action_mode="units"``.
 """
 
 from __future__ import annotations
@@ -21,28 +21,28 @@ from typing import Any
 import yaml
 
 from supply_chain_rl.config import load_config
+from supply_chain_rl.eval.runner import load_tuned, play
 from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH, ROOT
-from supply_chain_rl.policies.warmup import warmup_orders
+from supply_chain_rl.policies.registry import POLICY_NAMES, make_policy
 from supply_chain_rl.sim import logs
 from supply_chain_rl.sim.data import load_sim_data
 from supply_chain_rl.sim.daytable import format_day_table
 from supply_chain_rl.sim.env import SupplyChainEnv
 from supply_chain_rl.sim.golden import GB_ORDERS, ga_setup
 
-POLICIES = ("warmup",)
+POLICIES = POLICY_NAMES
 
 
-def run_policy(env: SupplyChainEnv, policy: str, seed: int, options: dict[str, Any]) -> None:
+def run_policy(
+    env: SupplyChainEnv,
+    policy: str,
+    seed: int,
+    options: dict[str, Any],
+    params: dict[str, float] | None = None,
+) -> None:
     """Reset and play until the episode ends with a rule-based policy in units mode."""
-    env.reset(seed=seed, options={**options, "action_mode": "units", "policy": policy})
-    done = False
-    while not done:
-        if policy == "warmup":
-            orders = warmup_orders(env.topo, env.notebook)
-        else:  # pragma: no cover - guarded by argparse choices
-            raise ValueError(policy)
-        _, _, term, trunc, _ = env.step({k: float(v) for k, v in orders.items()})
-        done = term or trunc
+    pol = make_policy(policy, env.topo, env.data, env.min_lead, params)
+    play(env, pol, seed, options)
 
 
 def _load_shocks(path: str | None) -> list[dict[str, Any]]:
@@ -90,8 +90,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.days is not None:
         options["decision_days"] = "all" if args.days == "all" else int(args.days)
     options["scenario_id"] = Path(args.shock).stem if args.shock else "control"
+    params = load_tuned()[args.policy] if args.policy != "warmup" else None
     t0 = time.perf_counter()
-    run_policy(env, args.policy, args.seed, options)
+    run_policy(env, args.policy, args.seed, options, params)
     elapsed = time.perf_counter() - t0
     df = env.log_frame()
     out = (

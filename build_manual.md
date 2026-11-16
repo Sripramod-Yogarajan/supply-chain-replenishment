@@ -2,7 +2,7 @@
 
 > **Dataset-informed corrections.** This manual was written before the datasets were inspected. Where the data showed an instruction to be outdated or wrong, a minimal correction was made in place and marked *(corrected ..., see DECISIONS D-x)*. The full reasoning and evidence are in `DECISIONS.md` and `ASSUMPTIONS.md`. Everything else is unchanged.
 
-**Spatio-Temporal Graph Reinforcement Learning for Bullwhip-Aware Supply Chain Replenishment: a phased manual for building a working prototype**
+## Spatio-Temporal Graph Reinforcement Learning for Bullwhip-Aware Supply Chain Replenishment: a phased manual for building a working prototype**
 
 This document is written to be uploaded to Claude Code together with the data files. It is both a specification (what the system is and which rules it follows) and a manual (what to build, in which order, how to test it, and when a phase counts as done). The concept-level explanation of the project is in the separate project documentation; nothing here depends on reading it, but the same names and numbers are used.
 
