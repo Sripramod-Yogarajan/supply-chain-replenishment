@@ -49,7 +49,10 @@ scenarios:                 # Phase 3 evaluation scenarios on the test days (manu
   shocks:
     transit_delay:  {type: transit_delay, target: W1->St1, delta_days: 3}
     demand_spike:   {type: demand_spike, target: [St1], k: 1.5}
-    price_discount: {type: price_discount, target: [St1], d: 0.2, u: null}   # u pending (ASSUMPTIONS A14)
+    # u = demand uplift of the discount (assumed, ASSUMPTIONS A14, DECISIONS D-23): M5 price cuts
+    # of other FOODS items in CA_1/CA_3 give 0.17 (95% 0.04 to 0.48; supply_chain_rl.data.uplift)
+    price_discount: {type: price_discount, target: [St1], d: 0.2, u: 0.2}
+    price_discount_high: {type: price_discount, target: [St1], d: 0.2, u: 0.5}   # sensitivity: top of the range
 rl:
   embed_dim: 16
   gat_layers: 2

@@ -2,7 +2,7 @@
 
 Defined in ``config.yaml`` under ``scenarios``: a shared window and one shock record (without
 ``id``/days) per scenario. A scenario whose size parameter is ``null`` is *pending*: it is listed
-but not run (the S3 uplift ``u`` is still to be chosen, ASSUMPTIONS A14). The control is scored
+but not run (e.g. an S3 record whose uplift ``u`` is not set, ASSUMPTIONS A14). The control is scored
 over the same window without a shock, so a shock's effect is the scenario minus the control under
 the same seeds (common random numbers).
 """

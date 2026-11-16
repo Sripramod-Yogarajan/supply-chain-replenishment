@@ -22,12 +22,15 @@
 | --- | --- | --- | --- |
 | 1 | Metric fixture G-H reproduced exactly | PASS | `test_metric_fixture_GH`: fill rate 147/148 and 100%, holding 5.55 and 6.35, total 6.55 and 6.35, bullwhip 0.92 and 0.16, fluctuation 22 and 6, largest order 21 and 17, shock stockouts 1 and 0, days to recover 3 and 3. |
 | 2 | Tuned values stored with cost plots, not at the grid edge | PASS | `results/baselines_tuned.json`; `tuning_basestock.png`, `tuning_movavg.png`. Base-stock needed no extension. Moving average: the coarse grid was extended (store to 2.5, warehouse to 0.25) because the first best pair sat on the edge; the final values are interior. |
-| 3 | Results of both baselines for the control and three shocks, test days, 20 seeds, mean and spread | PARTIAL | Control, transit delay and demand spike done (below). Price discount is pending: its uplift `u` is not chosen yet (A14, owner's decision). For a baseline this shock is identical to a demand spike of `k = 1 + u`, because baselines never look at price. |
+| 3 | Results of both baselines for the control and three shocks, test days, 20 seeds, mean and spread | PASS | Control, transit delay, demand spike and price discount (below). The price discount was first pending on its uplift `u`; it was estimated from M5 on 2026-11-16 (`u = 0.2`, plus `u = 0.5` as a sensitivity scenario; A21, D-23). |
 | 4 | Same seed gives identical lead-time draws to both baselines | PASS | `test_same_seed_same_lead_time_draws_for_both_baselines`: same `U` table and the same lead time on every (day, road) both policies shipped on. |
 | 5 | Runtime recorded | PASS | Tuning both baselines: about 4 min (318 pairs x 5 seeds x 1,494 days, 10 processes). Evaluation: 180 runs in 27 s. Sensitivity: about 5 min (two re-tunings of about 2.5 min each). |
 | 6 | Report says which baseline is better and why, with sensitivity | PASS | This report. |
 
-`pytest`: 154 passed (24 new). `ruff` and `mypy` (strict) clean.
+`pytest`: 163 passed (24 new in Phase 3, then 9 for the uplift estimate). `ruff` and `mypy`
+(strict) clean. Evaluation with all five scenarios: 300 runs in 47 s.
+
+**Gate G1: passed** (owner, 2026-11-16, D-24).
 
 ## Tuned parameters (training days 1 to 1500, 5 seeds)
 
@@ -66,8 +69,21 @@ Shocks (window days 1750 to 1759; the control is scored on the same days for ref
 | Transit delay W1->St1 +3 days | Moving average | 102 | +43 | 4.9 | +1.1 | 5,403 |
 | Demand spike St1 x1.5 | Base-stock | 177 | +116 | 4.5 | +0.9 | 5,445 |
 | Demand spike St1 x1.5 | Moving average | 187 | +128 | 4.7 | +0.9 | 5,535 |
+| Price discount St1 20%, `u = 0.2` | Base-stock | 84 | +24 | 4.5 | +0.9 | 5,351 |
+| Price discount St1 20%, `u = 0.2` | Moving average | 97 | +38 | 4.2 | +0.4 | 5,454 |
+| Price discount St1 20%, `u = 0.5` | both | identical to the demand spike rows | | | | |
 | Transit delay | Warm-up R9 | 3 | +3 | | | 15,203 |
 | Demand spike | Warm-up R9 | 12 | +12 | | | 15,178 |
+| Price discount, `u = 0.2` | Warm-up R9 | 0 | 0 | | | 15,118 |
+
+The price-discount uplift (A21). The chosen item's price never drops in M5, so `u` was measured
+on other food items in the same two stores: 41 permanent price cuts on 28 items (training days,
+shelf never empty for four weeks either side, corrected for store-wide sales). A 20% cut raised
+sales by about 17% (95% interval 4% to 48%), rounded to `u = 0.2`. Short promotions usually
+lift sales more than permanent cuts, so `u = 0.5` is run as well. Baselines ignore the price, so
+for them the discount is just a demand rise of `1 + u`: the `u = 0.5` scenario reproduces the
+1.5x demand spike exactly, which is a check on the shock code. The discount matters for the
+agent, which sees the lower price on the first day of the window.
 
 ## Which baseline is better, and why
 
@@ -135,10 +151,11 @@ the comparison.
 D-19 (joint grid search with refinement; objective kept), D-20 (seeds, scenarios, reference
 window, naive row, paired comparison), D-21 (re-tune per cost ratio), D-22 (`results/` not
 committed); A18 (mean lead time used by the baselines), A19 (bullwhip per level and chain;
-meaning of `unfilled_units`), A20 (recovery read against the control).
+meaning of `unfilled_units`), A20 (recovery read against the control). Added on 2026-11-16:
+D-23 and A21 (S3 uplift `u = 0.2` from M5, `u = 0.5` as sensitivity), D-24 (Gate G1 passed).
 
 ## Open items
 
-1. The S3 uplift `u` (A14) is needed to run the price-discount scenario (P3 item 3). For the
-   baselines that scenario is a demand spike of `1 + u` on St1.
+1. ~~The S3 uplift `u` (A14) is needed to run the price-discount scenario.~~ Done: `u = 0.2`
+   (A21, D-23).
 2. `requirements.lock` is still deferred (D-11).

@@ -46,6 +46,7 @@ Phase 3 run order: `eval.baselines tune` (about 4 min, 10 processes), then `eval
 | `python -m supply_chain_rl.data.build` | 1 (available) |
 | `python -m supply_chain_rl.data.dataco` | 1 (available) |
 | `python -m supply_chain_rl.graph.build` | 1 (available) |
+| `python -m supply_chain_rl.data.uplift` | 3 (available: evidence for the S3 uplift `u`) |
 | `python -m supply_chain_rl.sim.run --policy warmup --split train --start 100 --days 30 --seed 1` | 2 (available) |
 | `python -m supply_chain_rl.sim.run --policy basestock --split test --days all --seed 1 --shock shock.json` | 2/3 (available: warmup, basestock, movavg) |
 | `python -m supply_chain_rl.sim.run --golden G-A` | 2 (available) |
