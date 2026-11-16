@@ -159,8 +159,8 @@ supply-chain-replenishment/            ← the project folder
 | `src/.../config.py` | Code that reads `config.yaml` and checks it makes sense (e.g. the date ranges don't overlap). |
 | `src/.../seeding.py` | Controls randomness (see *seed* below). |
 | `src/.../paths.py` | One list of where the folders are, so no file has to guess. |
-| `DECISIONS.md` | A record of every decision we made and why (D-1 to D-31). |
-| `ASSUMPTIONS.md` | A record of everything we had to assume without proof (A1 to A22). |
+| `DECISIONS.md` | A record of every decision we made and why (D-1 to D-38). |
+| `ASSUMPTIONS.md` | A record of everything we had to assume without proof (A1 to A24). |
 | `README.md` | Short "how to install and run" instructions. |
 | `.gitignore` | Tells git (the version-history tool) which files not to save, e.g. the large datasets. |
 

@@ -612,6 +612,8 @@ The days-to-recover check: the before-window average end stock is 15.5 (base-sto
 
 ## 11. Phase 4: the dashboard
 
+*(corrected 2026-11-16: read this section together with DECISIONS D-32 to D-34, which take precedence. In short: results are written per split; window metrics are fill rate, stockouts and cost, with no per-window bullwhip; a logging-only shipments table feeds the network map; "late" is defined in ASSUMPTIONS A24; the day table may derive columns from earlier log rows; the map thresholds come from the config; KPI differences are against base-stock; source tags appear as column help and chart hover, with step buttons instead of keyboard arrows; the combined scenario must be defined in the config first.)*
+
 ### 11.1 Principles
 
 The dashboard is a **replay**, not an input box with a number as output. The user chooses a scenario, and the dashboard shows the network, the stock levels, the orders and the shock moving day by day, with the policies side by side and the scores at the end. Requirements:
@@ -688,6 +690,8 @@ A scenario is a JSON file (shocks, split, stretch). The runner of Section 10.3 w
 
 ## 12. Phases 5 and 6: PPO and the graph encoder
 
+*(corrected 2026-11-16: read this section together with DECISIONS D-35 to D-37, which take precedence. In short: the actor starts near 1/3 of the cap; truncated episodes are bootstrapped from the critic; starting stock is randomised in training episodes only; checkpoints are selected on validation seeds 201 to 205; every variant has at least three training seeds; G2 item 3 adds the naive-rule floor of 10,861; "clearly better" at G3 is a paired 95% interval excluding zero that holds across training seeds; lead-time-revealing features are an ablation only; the feature ablation is split into weekday and SNAP, event flag, price.)*
+
 ### 12.1 Phase 5: PPO on a flat state
 
 Purpose: show that an agent can learn in this simulator at all, before adding graph structure.
@@ -745,6 +749,8 @@ Build `rl/encoder.py` with PyTorch and PyTorch Geometric:
 **Success measure:** an honest ablation result, whichever way it goes.
 
 ## 13. Phase 7 and Phase 8: integration and scale-up
+
+*(corrected 2026-11-16: read this section together with DECISIONS D-34 and D-38, which take precedence. In short: the combined scenario is defined in the config before any learned policy sees the test days; the lockfile is regenerated at the start of Phase 5, not at the end; checklist item 9 needs a source tag per column or table, not per number; "lambda" in E8 is the order-change weight `cost_order_change`; tables with a learned policy also report the reward-based cost.)*
 
 ### 13.1 Phase 7: integration (the prototype is complete)
 
@@ -821,7 +827,7 @@ Add every further assumption as it arises, with its date and the phase.
 
 ### 14.2 Limitations to state in the report
 
-Sales used as demand; synthetic grafting of two unrelated datasets; simulated warehouses and suppliers; assumed discount uplift; unlimited supplier (the simulator therefore does not reproduce bullwhip caused by supply shortages at the factory); lost-sales assumption; both roads have the same simulated lead-time behaviour (2 to 6 days, mean 4), so the DataCo delay probability (0.40 against 0.80) is a label and the edge features carry almost no information for the graph encoder (added 2026-11-16, see DECISIONS D-29, ASSUMPTIONS A22); no look-ahead of events; one product and a small network; results describe the simulated chain only; no claim about real supply chains.
+Sales used as demand; synthetic grafting of two unrelated datasets; simulated warehouses and suppliers; assumed discount uplift; unlimited supplier (the simulator therefore does not reproduce bullwhip caused by supply shortages at the factory); lost-sales assumption; both roads have the same simulated lead-time behaviour (2 to 6 days, mean 4), so the DataCo delay probability (0.40 against 0.80) is a label and the edge features carry almost no information for the graph encoder (added 2026-11-16, see DECISIONS D-29, ASSUMPTIONS A22); a 7-day observation window that is shorter than the 4 to 12 days a warehouse order takes to affect the shelf (added 2026-11-16, see DECISIONS D-37, ASSUMPTIONS A23); no look-ahead of events; one product and a small network; results describe the simulated chain only; no claim about real supply chains.
 
 ### 14.3 Risks and mitigations
 

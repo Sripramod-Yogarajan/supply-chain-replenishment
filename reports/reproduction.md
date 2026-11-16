@@ -5,8 +5,8 @@ Command outputs are kept in `results/repro_logs/` (git-ignored, like all of `res
 
 **Follow-up, 2026-11-16.** The owner decided the open points: DECISIONS D-25 to D-31. The
 documentation mismatches of Section 3 are fixed (D-30). Of the proposals in Section 7, Group A is
-applied to the manual, M-37 is deferred to Phase 8 and Group B awaits a decision (D-31). The text
-below is the report as first written.
+applied to the manual and M-37 is deferred to Phase 8 (D-31). Group B was then accepted in full
+and is recorded as D-32 to D-38. The text below is the report as first written.
 
 **Summary.** Every number in the phase reports that a committed command produces was reproduced
 exactly. Six small things did not match; all are documentation or setup, none is a number produced
