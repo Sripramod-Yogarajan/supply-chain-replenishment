@@ -24,7 +24,7 @@ from supply_chain_rl.dashboard import store
 from supply_chain_rl.eval.run import evaluate, write_results
 from supply_chain_rl.eval.runner import eval_seeds
 from supply_chain_rl.eval.scenarios import Scenario
-from supply_chain_rl.policies.registry import POLICY_NAMES
+from supply_chain_rl.policies.registry import LEARNED, POLICY_NAMES
 from supply_chain_rl.sim.data import SimData
 from supply_chain_rl.sim.shocks import SHOCK_TYPES, ShockError, parse_shock
 from supply_chain_rl.sim.state import Topology
@@ -34,9 +34,13 @@ EXPLORATORY = ("supplier_outage",)  # shown as exploratory: no configured scenar
 
 
 def custom_policies(cfg: Config) -> list[str]:
-    """Policies allowed in custom runs: the configured list, limited to the registry (D-41)."""
+    """Policies allowed in custom runs: the configured list, limited to the registry (D-41).
+
+    A learned policy is left out while ``rl.allow_test_split`` is false: custom shocks run on the
+    test days, which it may see only once, after G3 (M-33, D-41)."""
     allowed = (cfg.raw.get("dashboard") or {}).get("custom_policies") or []
-    return [p for p in POLICY_NAMES if p in allowed]
+    test_ok = bool((cfg.raw.get("rl") or {}).get("allow_test_split", False))
+    return [p for p in POLICY_NAMES if p in allowed and (test_ok or p not in LEARNED)]
 
 
 def targets_for(cfg: Config, shock_type: str) -> list[str]:

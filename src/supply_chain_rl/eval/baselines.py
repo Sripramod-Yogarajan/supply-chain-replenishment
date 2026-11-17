@@ -32,7 +32,7 @@ from typing import Any
 import numpy as np
 
 from supply_chain_rl.config import Config, load_config, validate
-from supply_chain_rl.eval.runner import TUNED_PATH, score
+from supply_chain_rl.eval.runner import SMOKE_TUNED_PATH, TUNED_PATH, network_config, score
 from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH, FIGURES
 from supply_chain_rl.policies.registry import PARAM_NAMES
 from supply_chain_rl.sim.data import SimData, load_sim_data
@@ -274,10 +274,16 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="default: baselines.tuning_objective in config.yaml",
     )
-    ap.add_argument("--out", type=Path, default=TUNED_PATH)
+    ap.add_argument("--out", type=Path, default=None,
+                    help="default: results/baselines_tuned.json (prototype) or "
+                    "results/smoke/baselines_tuned.json (smoke)")  # fmt: skip
+    ap.add_argument("--network", choices=("prototype", "smoke"), default="prototype",
+                    help="smoke: S1, W1, St1 (DECISIONS D-26)")  # fmt: skip
     args = ap.parse_args(argv)
 
-    cfg = load_config(CONFIG_PATH, DERIVED_PATH)
+    cfg = network_config(load_config(CONFIG_PATH, DERIVED_PATH), args.network)
+    if args.out is None:
+        args.out = TUNED_PATH if args.network == "prototype" else SMOKE_TUNED_PATH
     data = load_sim_data(cfg)
     res = tune_all(
         cfg,
@@ -290,6 +296,8 @@ def main(argv: list[str] | None = None) -> None:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(res, indent=1), encoding="utf-8")
     suffix = "" if res["objective"] == "total_cost" else f"_{res['objective']}"
+    if args.network != "prototype":
+        suffix += f"_{args.network}"
     for p, r in res["policies"].items():
         plot_tuning(p, r, FIGURES / f"tuning_{p}{suffix}.png")
         tm = r["train_metrics"]

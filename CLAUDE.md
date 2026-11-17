@@ -1,8 +1,8 @@
 # Standing rules for every session
 
 Project: supply-chain replenishment with a PPO agent and a GAT + LSTM encoder, M5 demand and
-DataCo lead times. Phases 0 to 4 are built and Gate G1 is passed. The state of the results and the
-open corrections to the manual are in `reports/reproduction.md`.
+DataCo lead times. Phases 0 to 5 are built; Gates G1 and G2 are passed (`reports/phase_5.md`).
+The state of the results and the open corrections to the manual are in `reports/reproduction.md`.
 
 ## Order of trust
 
@@ -51,8 +51,9 @@ When sources disagree, trust them in this order:
 
 ## Practical notes
 
-- Environment: Python 3.11, `.venv`. `requirements.lock` lists only the Phase 0 packages (D-11);
-  install with `pip install -e ".[dev]"` until the lockfile is regenerated.
+- Environment: Python 3.11, `.venv`, installed from `requirements.lock` (D-52), then
+  `pip install -e . --no-deps`. PPO trains on the CPU (D-48); checkpoints go to `checkpoints/`,
+  which is not committed.
 - `python -m supply_chain_rl.eval.run` writes to `results/<split>/` (D-32); the tuned parameters
   and sensitivity tables stay in `results/`. The dashboard (`streamlit run app/dashboard.py`)
   only reads these files and `runs/<split>/`.

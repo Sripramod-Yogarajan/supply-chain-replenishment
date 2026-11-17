@@ -297,7 +297,7 @@ def placeholder_folder(root: Path, label: str = "ppo", source: str = "warmup") -
 
 _WITH_PPO = (
     "import sys; import supply_chain_rl.policies.registry as r; "
-    "r.POLICY_NAMES = (*r.POLICY_NAMES, 'ppo'); "
+    "r.POLICY_NAMES = (*r.POLICY_NAMES, 'ppo') if 'ppo' not in r.POLICY_NAMES else r.POLICY_NAMES; "
     "from streamlit.web import cli; sys.argv = ['streamlit', *sys.argv[1:]]; cli.main()"
 )
 

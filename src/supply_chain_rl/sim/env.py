@@ -215,6 +215,26 @@ class SupplyChainEnv(gym.Env[dict[str, np.ndarray], np.ndarray]):
         self._buffer.append(node_features(rows, self.data))
         self._edge_attr = edge_features(self.data, self.shocks, self.nb.t)
 
+    def peek_observation(self) -> dict[str, np.ndarray]:
+        """The observation of the start of the current day, without storing anything.
+
+        After the last step of a truncated episode the environment does not observe again, but
+        PPO needs the next state's value to bootstrap the return (DECISIONS D-35 b, D-51). This
+        builds that observation from the same functions as :meth:`_observe` and leaves the
+        notebook, the history buffer, the log and the day tables untouched. No rule runs.
+        """
+        if self.nb is None:
+            raise RuntimeError("reset() first")
+        rows = state_rows(self.topo, self.nb, self.data, self.shocks, self.window)
+        buf = deque(self._buffer, maxlen=self.window)
+        if self._done:  # the last step did not observe: today's graph is new
+            buf.append(node_features(rows, self.data))
+        return {
+            "node_features": np.stack(list(buf)).astype(np.float32),
+            "edge_index": self.data.skeleton.edge_index.astype(np.int64),
+            "edge_attr": edge_features(self.data, self.shocks, self.nb.t),
+        }
+
     def _obs(self) -> dict[str, np.ndarray]:
         return {
             "node_features": np.stack(list(self._buffer)).astype(np.float32),

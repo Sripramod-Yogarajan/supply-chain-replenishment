@@ -93,6 +93,8 @@ def test_registry_checks_parameters(day7: SupplyChainEnv) -> None:
     with pytest.raises(ValueError, match="needs parameters"):
         make_policy("basestock", day7.topo, day7.data, 1, {"m_store": 1.0})
     with pytest.raises(ValueError, match="unknown policy"):
+        make_policy("sarsa", day7.topo, day7.data, 1, {})
+    with pytest.raises(ValueError, match="needs a checkpoint"):  # D-51
         make_policy("ppo", day7.topo, day7.data, 1, {})
     assert make_policy("warmup", day7.topo, day7.data, 1).orders(day7.topo, day7.notebook) == {
         "W1": 13.0 + 9.0, "St1": 16.0, "St2": 11.0,

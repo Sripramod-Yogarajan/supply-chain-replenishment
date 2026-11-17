@@ -10,6 +10,7 @@ data/processed/*
 runs/*
 results/
 reports/figures/
+checkpoints/
 !**/.gitkeep
 .env
 *.pt

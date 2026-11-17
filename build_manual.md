@@ -75,7 +75,7 @@ Gates are stop-and-review points. G0 means the data and graph are verified. G1 m
 
 - Python 3.11. Libraries: numpy, pandas, pyarrow (parquet files), pyyaml, networkx, matplotlib, plotly, streamlit, gymnasium, pytest; for Phases 5 onwards: torch and torch\_geometric. (corrected 2026-11-06, see DECISIONS D-1, D-4)
 - Package name: the Python package is `src/supply_chain_rl/` at the repository root (no `fyp/` directory). Wherever this manual writes `fyp` (tree below, commands in Section 5), read `supply_chain_rl` (corrected 2026-11-06, see DECISIONS D-1).
-- Hardware: the graph has 4 to 8 nodes, so a local 8 GB GPU or a Colab T4 is enough; Phases 0 to 4 need no GPU (checked: the development machine has no NVIDIA GPU, so Phases 5 onwards use Colab or CPU (corrected 2026-11-06, see DECISIONS D-12)).
+- Hardware: the graph has 4 to 8 nodes, so a local 8 GB GPU or a Colab T4 is enough; Phases 0 to 4 need no GPU (checked: the development machine has no NVIDIA GPU, so Phases 5 onwards use Colab or CPU (corrected 2026-11-06, see DECISIONS D-12)). (corrected 2026-11-17, see DECISIONS D-47 and D-48: the development laptop has an RTX 3070 Ti Laptop GPU with 8 GB; PPO is trained on the CPU, which measured faster for these networks.)
 
 ```
 fyp/

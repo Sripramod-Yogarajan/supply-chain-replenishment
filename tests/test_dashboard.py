@@ -27,7 +27,7 @@ from supply_chain_rl.dashboard import theme as T
 from supply_chain_rl.eval.run import evaluate, write_results
 from supply_chain_rl.eval.runner import play
 from supply_chain_rl.paths import PROCESSED, ROOT
-from supply_chain_rl.policies.registry import POLICY_NAMES, make_policy
+from supply_chain_rl.policies.registry import LEARNED, POLICY_NAMES, make_policy
 from supply_chain_rl.sim import logs
 from supply_chain_rl.sim.data import SimData
 from supply_chain_rl.sim.env import SupplyChainEnv
@@ -93,6 +93,8 @@ def bundle(tmp_path_factory: pytest.TempPathFactory) -> Bundle:
     return Bundle(cfg, data, paths)
 
 
+RULE_BASED = [p for p in POLICY_NAMES if p not in LEARNED]  # 'ppo' has no logs in these fixtures
+
 # ------------------------------------------------------------------------------- readers
 
 
@@ -100,7 +102,7 @@ def test_store_lists_scenarios_and_registry_policies(bundle: Bundle) -> None:
     """Scenarios in config order; policies come from the registry, so a later 'ppo' appears."""
     assert store.splits(bundle.paths) == ["test"]
     assert store.scenario_ids(bundle.paths, "test", SCENARIOS) == SCENARIOS
-    assert store.policies_available(bundle.paths, "test", "control", 1) == list(POLICY_NAMES)
+    assert store.policies_available(bundle.paths, "test", "control", 1) == RULE_BASED
     assert store.policies_available(bundle.paths, "test", "control", 99) == []
     scn = store.load_scenario(bundle.paths, "test", "transit_delay")
     assert scn["window"] == list(WINDOW) and scn["split"] == "test" and scn["seeds"] == SEEDS
@@ -609,7 +611,7 @@ def test_custom_shock_runs_through_the_harness_and_is_cached(bundle: Bundle) -> 
     assert (paths.results / "test" / "results.csv").read_bytes() == before  # headline untouched
     assert sid in store.scenario_ids(paths, "test", SCENARIOS)
     assert store.scenario_ids(paths, "test", SCENARIOS)[: len(SCENARIOS)] == SCENARIOS
-    assert store.policies_available(paths, "test", sid, 1) == list(POLICY_NAMES)
+    assert store.policies_available(paths, "test", sid, 1) == RULE_BASED
     res = store.load_results(paths, "test", sid)
     assert set(res["policy"]) == set(POLICIES) and res["n"].max() == len(SEEDS)
     assert (res[res["metric"] == "total_cost"]["n"] == len(SEEDS)).all()
@@ -666,8 +668,11 @@ def test_custom_shock_validation_and_policy_list(bundle: Bundle) -> None:
             custom.build_scenario(cfg, bad)
     assert custom.custom_policies(cfg) == ["warmup", "basestock", "movavg"]
     raw = copy.deepcopy(cfg.raw)
-    raw["dashboard"]["custom_policies"] = ["basestock", "ppo"]  # ppo is not in the registry yet
+    raw["dashboard"]["custom_policies"] = ["basestock", "ppo", "sarsa"]
+    # ppo is refused before its official test evaluation (D-41); sarsa is not in the registry
     assert custom.custom_policies(golden_config(raw)) == ["basestock"]
+    raw["rl"]["allow_test_split"] = True  # after G3 (M-33)
+    assert custom.custom_policies(golden_config(raw)) == ["basestock", "ppo"]
 
 
 # ------------------------------------------------------------------------------ the app

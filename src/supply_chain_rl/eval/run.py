@@ -39,6 +39,12 @@ KEY_METRICS = ("total_cost", "fill_rate", "stockout_units", "holding_cost", "ord
                "largest_order", "unfilled_units", "stockout_during_shock", "days_to_recover")  # fmt: skip
 
 
+# Paired comparisons written to paired.csv when both policies were run (same seeds). The learned
+# policy is compared with both baselines (D-25: base-stock is the cost bar, moving average the
+# service bar on validation days).
+PAIRS = (("basestock", "movavg"), ("ppo", "basestock"), ("ppo", "movavg"))
+
+
 def evaluate(
     cfg: Config,
     data: SimData,
@@ -107,8 +113,9 @@ def write_results(
     summary.assign(split=split)[["split", *summary.columns]].to_csv(
         out_dir / "results.csv", index=False
     )
-    if {"basestock", "movavg"} <= set(runs["policy"]):
-        pr = paired(runs, "basestock", "movavg")
+    pairs = [(a, b) for a, b in PAIRS if {a, b} <= set(runs["policy"])]
+    if pairs:
+        pr = pd.concat([paired(runs, a, b) for a, b in pairs], ignore_index=True)
         pr.assign(split=split)[["split", *pr.columns]].to_csv(out_dir / "paired.csv", index=False)
     full = {"split": split, **info, "scenarios": sorted(runs["scenario"].unique().tolist()),
             "runs": len(runs)}  # fmt: skip
@@ -183,7 +190,7 @@ def main(argv: list[str] | None = None) -> None:
     cfg = load_config(CONFIG_PATH, DERIVED_PATH)
     data = load_sim_data(cfg)
     policies = args.policies.split(",")
-    tuned = load_tuned() if any(p != "warmup" for p in policies) else {}
+    tuned = load_tuned() if any(p not in ("warmup", "ppo") for p in policies) else {}
     seeds = eval_seeds(cfg, args.seeds)
     out_dir: Path = args.out_dir or RESULTS / args.split
     log_root = None if args.no_logs else ROOT / "runs" / args.split
