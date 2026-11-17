@@ -126,7 +126,7 @@ def test_D57_variants_and_feature_groups_of_D37(raw_config: dict[str, Any]) -> N
     cfg, data = _setup(raw_config)
     v = cfg.section("rl")["variants"]
     assert set(v) == {"flat", "graph_nolstm", "graph_lstm", "graph_lstm_no_wd_snap",
-                      "graph_lstm_no_event", "graph_lstm_no_price", "graph_lstm_pretrained"}  # fmt: skip
+                      "graph_lstm_no_event", "graph_lstm_no_price", "graph_lstm_pretrained", "flat_shock"}  # fmt: skip
     assert variant_spec(cfg, "graph_lstm_no_wd_snap")["drop_features"] == [
         "sin_wd",
         "cos_wd",
@@ -362,3 +362,34 @@ def test_D56_possibly_under_trained_flag(tmp_path: Path) -> None:
         (tmp_path / "done.json").write_text(json.dumps(
             {"updates": updates, "best_update": best, "stopped": stopped}))  # fmt: skip
         assert selection_info(tmp_path)["possibly_under_trained"] is flag
+
+
+# ------------------------------------------------------------------ D-60 Gate G3b
+
+
+def test_D60_g3b_rule_mean_interval_over_training_seeds_and_four_of_five() -> None:
+    import pandas as pd
+
+    from supply_chain_rl.config import load_config
+    from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH
+    from supply_chain_rl.rl.g3b import g3b_verdict
+
+    seeds = [1004, 1005, 1006, 1007, 1008]
+    runs = pd.concat(
+        [_runs({k: d}) for k, d in zip(seeds, (-100, -90, -80, -120, -110), strict=True)]
+    )
+    v = g3b_verdict(runs, "graph_lstm", "flat", seeds, 4)
+    assert v["pass"] and v["seeds_clearly_better"] == 5 and v["mean"]["t"] == 2.776
+    runs = pd.concat([_runs({k: d}) for k, d in zip(seeds, (-100, -90, 0, 0, -110), strict=True)])
+    v = g3b_verdict(runs, "graph_lstm", "flat", seeds, 4)
+    assert not v["pass"] and v["seeds_clearly_better"] == 3  # fewer than 4 of 5
+    runs = pd.concat(
+        [_runs({k: d}) for k, d in zip(seeds, (-400, -20, -30, -25, 300), strict=True)]
+    )
+    assert not g3b_verdict(runs, "graph_lstm", "flat", seeds, 4)["pass"]
+    cfg = load_config(CONFIG_PATH, DERIVED_PATH)
+    g = cfg.section("rl")["g3b"]
+    used = set(cfg.section("rl")["training_seeds"]) | set(cfg.section("rl")["selection_seeds"])
+    used |= set(cfg.section("baselines")["tuning_seeds"]) | set(range(1, 21))
+    assert g["training_seeds"] == seeds and not set(seeds) & used  # fresh seeds
+    assert g["contender"] == "graph_lstm" and g["min_seeds_clearly_better"] == 4

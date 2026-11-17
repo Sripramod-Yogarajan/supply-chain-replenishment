@@ -36,7 +36,17 @@ def scenarios(cfg: Config) -> dict[str, Scenario]:
         return {"control": Scenario("control")}
     start, end = (int(x) for x in sec["window"])
     out = {"control": Scenario("control", reference_window=(start, end))}
-    for name, rec in (sec.get("shocks") or {}).items():
+    records = sec.get("shocks") or {}
+    for name, rec in records.items():
+        if "shocks" in rec:  # several shocks at once (D-63): names of single-shock records
+            parts = []
+            for i, ref in enumerate(rec["shocks"]):
+                if ref not in records or "shocks" in records[ref]:
+                    raise ValueError(f"scenario {name}: {ref!r} is not a single-shock scenario")
+                parts.append({"id": f"{name}_{i + 1}_{ref}", **records[ref],
+                              "start_day": start, "end_day": end})  # fmt: skip
+            out[name] = Scenario(name, parts)
+            continue
         missing = [k for k, v in rec.items() if v is None]
         shock = {"id": name, **rec, "start_day": start, "end_day": end}
         out[name] = Scenario(

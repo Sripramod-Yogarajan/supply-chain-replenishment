@@ -8,6 +8,7 @@ run with the same seed face the same lead time for the same day and road.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -68,17 +69,47 @@ def play(
     return env.log_frame()
 
 
-def check_split(cfg: Config, policy_name: str, split: str) -> None:
+TEST_LOCK = ROOT / "reports" / "test_lock.json"  # written after the single learned test run
+
+
+def is_learned(cfg: Config, policy_name: str) -> bool:
+    """``ppo`` and every frozen learned policy of ``rl.evaluated`` (D-61), plus any name that
+    starts with a learned name (e.g. ``ppo_s1002``)."""
+    names = set(LEARNED) | set(cfg.section("rl").get("evaluated") or {})
+    return policy_name in names or any(policy_name.startswith(f"{n}_") for n in LEARNED)
+
+
+def check_split(cfg: Config, policy_name: str, split: str, lock: Path | None = None) -> None:
     """M-33, D-41: a learned policy is not run on the test days before its single official
-    evaluation after G3 (``rl.allow_test_split`` stays false until then)."""
-    if (
-        policy_name in LEARNED
-        and split == "test"
-        and not cfg.section("rl").get("allow_test_split", False)
-    ):
+    evaluation after G3 (``rl.allow_test_split`` stays false until then). Test-once (D-61):
+    once ``reports/test_lock.json`` exists, no learned policy may run on the test days again;
+    baselines stay allowed."""
+    if not is_learned(cfg, policy_name) or split != "test":
+        return
+    if not cfg.section("rl").get("allow_test_split", False):
         raise PermissionError(
             f"{policy_name} may not run on the test split before G3 (M-33, D-41); use --split val"
         )
+    lock = TEST_LOCK if lock is None else lock
+    if lock.exists():
+        raise PermissionError(
+            f"{policy_name}: the learned policies' single test evaluation is done ({lock}); "
+            "a second learned run on the test days is refused (D-61)"
+        )
+
+
+def learned_checkpoint(cfg: Config, policy_name: str) -> Path:
+    """The frozen checkpoint of a learned policy, its SHA-256 checked (D-61)."""
+    rl = cfg.section("rl")
+    ev = rl.get("evaluated") or {}
+    if policy_name in ev:
+        path = ROOT / str(ev[policy_name]["checkpoint"])
+        want = str(ev[policy_name]["sha256"])
+        got = hashlib.sha256(path.read_bytes()).hexdigest()
+        if got != want:
+            raise ValueError(f"{path}: SHA-256 {got} differs from the frozen {want} (D-61)")
+        return path
+    return ROOT / str(rl["selected_checkpoint"])
 
 
 def network_config(cfg: Config, network: str) -> Config:
@@ -110,10 +141,16 @@ def score(
     check_split(cfg, policy_name, split)
     sim = cfg.section("sim")
     topo = Topology.from_config(cfg)
-    ckpt = None
-    if policy_name in LEARNED:
-        ckpt = ROOT / str(cfg.section("rl")["selected_checkpoint"])
-    policy = make_policy(policy_name, topo, data, sim["min_lead_time"], params, checkpoint=ckpt)
+    policy: Any
+    if is_learned(cfg, policy_name) and policy_name not in LEARNED:
+        from supply_chain_rl.rl.policy import load_ppo
+
+        policy = load_ppo(learned_checkpoint(cfg, policy_name), topo)
+        policy.name = policy_name
+    else:
+        ckpt = learned_checkpoint(cfg, policy_name) if policy_name in LEARNED else None
+        policy = make_policy(policy_name, topo, data, sim["min_lead_time"], params,
+                             checkpoint=ckpt)  # fmt: skip
     return score_policy(cfg, data, policy, seeds, split, shocks, scenario_id, log_dir, window)
 
 

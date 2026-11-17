@@ -215,6 +215,24 @@ class SupplyChainEnv(gym.Env[dict[str, np.ndarray], np.ndarray]):
         self._buffer.append(node_features(rows, self.data))
         self._edge_attr = edge_features(self.data, self.shocks, self.nb.t)
 
+    def add_training_shocks(self, records: Sequence[Mapping[str, Any]]) -> None:
+        """Add hidden shocks after ``reset`` (D-62, shock-trained PPO; training episodes only).
+
+        Every shock must start after today (the observation of today is already built) and lie
+        on training days, so nothing already seen changes and no test day is ever shocked.
+        """
+        if self.nb is None or self.split != "train":
+            raise RuntimeError("training shocks are added to a reset training episode only")
+        stores = [n for n in self.topo.nodes if self.topo.types[n] == "store"]
+        suppliers = [n for n in self.topo.nodes if self.topo.types[n] == "supplier"]
+        hi = self.cfg.splits["train"][1]
+        for rec in records:
+            shock = sh.parse_shock(rec, self.edge_id, stores, suppliers)
+            if shock.start_day <= self.nb.t or shock.end_day > hi or shock.announced:
+                raise ValueError(f"training shock {shock.id} must be hidden, start after day "
+                                 f"{self.nb.t} and end by day {hi}")  # fmt: skip
+            self.shocks.append(shock)
+
     def peek_observation(self) -> dict[str, np.ndarray]:
         """The observation of the start of the current day, without storing anything.
 

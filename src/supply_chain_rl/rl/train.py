@@ -31,7 +31,7 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -139,6 +139,11 @@ class Trainer:
         self.gen = torch.Generator().manual_seed(train_seed)  # action noise and minibatches
         self.rng_episodes = make_rng(train_seed, "episodes")
         self.rng_stock = make_rng(train_seed, "start_stock")
+        spec = variant_spec(cfg, variant)
+        self.train_shocks: dict[str, Any] | None = (
+            dict(cfg.section("rl")["train_shocks"]) if spec.get("train_shocks") else None
+        )
+        self.rng_shocks = make_rng(train_seed, "train_shocks")  # D-62; unused without shocks
         self.state = TrainState()
 
     # ------------------------------------------------------------------------ logging
@@ -179,10 +184,16 @@ class Trainer:
         clipped = 0
         std = self.model.log_std.detach().exp()
         for r in range(self.rounds):
-            obs = []
+            obs: list[np.ndarray] = []
             for env in self.envs:
                 seed = int(self.rng_episodes.integers(0, 2**31 - 1))
                 o, _ = env.reset(seed=seed, options=self.train_options())
+                if self.train_shocks is not None:
+                    env.add_training_shocks(draw_training_shock(
+                        self.rng_shocks, self.train_shocks, env.notebook.t, self.dd,
+                        self.cfg.splits["train"][1], sorted(env.edge_id),
+                        [n for n in self.topo.nodes if self.topo.types[n] == "store"],
+                        self.state.episodes + len(obs)))  # fmt: skip
                 obs.append(self.model.encode(o))
             for d in range(D):
                 o_t = torch.as_tensor(np.stack(obs), device=dev)
@@ -283,6 +294,7 @@ class Trainer:
             "torch_rng_state": torch.get_rng_state(),
             "rng_episodes": self.rng_episodes.bit_generator.state,
             "rng_stock": self.rng_stock.bit_generator.state,
+            "rng_shocks": self.rng_shocks.bit_generator.state,
             "train_state": asdict(self.state),
         }
         tmp = self.out_dir / "last.pt.tmp"
@@ -310,6 +322,8 @@ class Trainer:
         torch.set_rng_state(rec["torch_rng_state"])
         self.rng_episodes.bit_generator.state = rec["rng_episodes"]
         self.rng_stock.bit_generator.state = rec["rng_stock"]
+        if "rng_shocks" in rec:
+            self.rng_shocks.bit_generator.state = rec["rng_shocks"]
         self.state = TrainState(**rec["train_state"])
         self.log(f"resumed from last.pt at update {self.state.update}")
 
@@ -400,6 +414,49 @@ def variant_spec(cfg: Config, variant: str | None) -> dict[str, Any]:
     spec = {"model": "graph", "lstm": True, "drop_features": [], "pretrain": False}
     spec.update(variants[variant] or {})
     return spec
+
+
+def draw_training_shock(
+    rng: np.random.Generator,
+    ts: Mapping[str, Any],
+    first_day: int,
+    decision_days: int,
+    last_train_day: int,
+    roads: Sequence[str],
+    stores: Sequence[str],
+    episode: int,
+) -> list[dict[str, Any]]:
+    """At most one hidden shock for a training episode (D-62, ``rl.train_shocks``).
+
+    With probability ``prob`` one shock of a type drawn uniformly from ``types``, lasting
+    ``length_days`` from a start drawn uniformly over the episode's decision days after the first
+    (cut at the last training day): a transit delay of ``delay_days`` (integers, inclusive) on one
+    road, a demand spike with ``spike_k`` (uniform) at one store, or a price discount ``d`` with
+    uplift ``discount_u`` (uniform) at one store.
+    """
+    if rng.uniform() >= float(ts["prob"]):
+        return []
+    typ = str(rng.choice(list(ts["types"])))
+    start = first_day + int(rng.integers(1, decision_days))
+    end = min(start + int(ts["length_days"]) - 1, last_train_day)
+    rec: dict[str, Any] = {"id": f"train_{episode}", "type": typ, "start_day": start,
+                           "end_day": end}  # fmt: skip
+    if typ == "transit_delay":
+        lo, hi = ts["delay_days"]
+        rec |= {"target": str(rng.choice(list(roads))),
+                "delta_days": int(rng.integers(int(lo), int(hi) + 1))}  # fmt: skip
+    elif typ == "demand_spike":
+        lo, hi = ts["spike_k"]
+        rec |= {"target": [str(rng.choice(list(stores)))], "k": float(rng.uniform(lo, hi))}
+    elif typ == "price_discount":
+        lo, hi = ts["discount_u"]
+        rec |= {"target": [str(rng.choice(list(stores)))], "d": float(ts["discount_d"]),
+                "u": float(rng.uniform(lo, hi))}  # fmt: skip
+    else:
+        raise ValueError(f"training shock type {typ!r} not allowed (D-62)")
+    if end > last_train_day:  # D-27: training days only, so never the test shock window
+        raise AssertionError("training shock outside training days")
+    return [rec]
 
 
 def phase6_target_kl(cfg: Config) -> float | None:

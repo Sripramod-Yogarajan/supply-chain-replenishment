@@ -20,6 +20,7 @@ Scenarios whose size is not configured yet are skipped with a notice.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 from collections.abc import Mapping, Sequence
@@ -29,7 +30,15 @@ from typing import Any
 import pandas as pd
 
 from supply_chain_rl.config import Config, load_config
-from supply_chain_rl.eval.runner import RESULTS, eval_seeds, load_tuned, score
+from supply_chain_rl.eval.runner import (
+    RESULTS,
+    TEST_LOCK,
+    eval_seeds,
+    is_learned,
+    learned_checkpoint,
+    load_tuned,
+    score,
+)
 from supply_chain_rl.eval.scenarios import Scenario, scenarios
 from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH, ROOT
 from supply_chain_rl.sim.data import SimData, load_sim_data
@@ -113,7 +122,9 @@ def write_results(
     summary.assign(split=split)[["split", *summary.columns]].to_csv(
         out_dir / "results.csv", index=False
     )
-    pairs = [(a, b) for a, b in PAIRS if {a, b} <= set(runs["policy"])]
+    learned = [p for p in runs["policy"].unique() if p not in ("warmup", "basestock", "movavg")]
+    candidates = [*PAIRS, *[(p, b) for p in learned for b in ("basestock", "movavg")]]
+    pairs = list(dict.fromkeys((a, b) for a, b in candidates if {a, b} <= set(runs["policy"])))
     if pairs:
         pr = pd.concat([paired(runs, a, b) for a, b in pairs], ignore_index=True)
         pr.assign(split=split)[["split", *pr.columns]].to_csv(out_dir / "paired.csv", index=False)
@@ -175,6 +186,26 @@ def headline(summary: pd.DataFrame, metrics: Sequence[str] = KEY_METRICS) -> pd.
     return wide[[m for m in metrics if m in wide.columns]]
 
 
+def write_test_lock(
+    cfg: Config,
+    learned: Sequence[str],
+    scenario_ids: Sequence[str],
+    seeds: Sequence[int],
+    path: Path = TEST_LOCK,
+) -> None:
+    """D-61: record the single learned test run; later learned test runs are refused."""
+    frozen = {}
+    for p in learned:
+        ck = learned_checkpoint(cfg, p)
+        frozen[p] = {"checkpoint": ck.relative_to(ROOT).as_posix(),
+                     "sha256": hashlib.sha256(ck.read_bytes()).hexdigest()}  # fmt: skip
+    rec = {"date": time.strftime("%Y-%m-%d %H:%M:%S"), "decision": "D-61", "split": "test",
+           "policies": frozen, "scenarios": list(scenario_ids), "seeds": list(seeds),
+           "config_hash": cfg.hash()}  # fmt: skip
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(rec, indent=1) + "\n", encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)  # fmt: skip
@@ -201,6 +232,9 @@ def main(argv: list[str] | None = None) -> None:
     info = {"seeds": seeds, "policies": policies, "tuned": tuned, "config_hash": cfg.hash(),
             "seconds": round(elapsed, 1)}  # fmt: skip
     summary = write_results(runs, out_dir, args.split, info)
+    learned = [p for p in policies if is_learned(cfg, p)]
+    if args.split == "test" and learned:
+        write_test_lock(cfg, learned, sorted(runs["scenario"].unique()), seeds)
 
     with pd.option_context("display.width", 250, "display.max_columns", 30):
         print(headline(summary).to_string())
