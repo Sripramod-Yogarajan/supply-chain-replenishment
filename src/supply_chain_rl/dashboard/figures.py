@@ -113,6 +113,55 @@ def map_state(replay: Replay, t: int, ctx: Context) -> dict[str, Any]:
     return {"day": t, "nodes": nodes, "roads": roads}
 
 
+def road_hover(road: str, r: Mapping[str, Any], ctx: Context) -> str:
+    """Hover text of a road; the same text in the 2D map and the 3D scene."""
+    lo, hi = ctx.road_range[road]
+    return (
+        f"<b>Road {road.replace('->', '→')}</b><br>Shipped today: {r['shipped']} units [R4]"
+        f"<br>Lead time: {lo} to {hi} days, mean {ctx.road_mean[road]:.1f} [R10, D]"
+        f"<br>DataCo delay label: {ctx.road_label[road]:.0%} (a label only; no rule reads it)"
+        + (f"<br><b>Transit delay active: {r['delay_text']} [S1]</b>" if r["delayed"] else "")
+    )
+
+
+def dot_hover(r: Mapping[str, Any], d: Mapping[str, Any]) -> str:
+    """Hover text of a group of shipments on a road (same in 2D and 3D)."""
+    many = f" in {d['shipments']} shipments" if d["shipments"] > 1 else ""
+    return (
+        f"<b>On the way to {r['to']}</b><br>{d['qty']} units{many}"
+        f"<br>{d['remaining']} day(s) until delivery [R10]"
+        + ("<br>Late: 5 or more days on the road [A24]" if d["late"] else "")
+    )
+
+
+def node_hover(n: str, s: Mapping[str, Any]) -> str:
+    """Hover text of a node (same in 2D and 3D)."""
+    if s["type"] == "supplier":
+        return f"<b>{n}</b> · supplier (unlimited)<br>Orders received today: {s['demand']} [R2]"
+    return (
+        f"<b>{n}</b> · {s['type']}"
+        f"<br>Stock at end of day: {s['stock_end']} units [R6]"
+        f"<br>Cover: {s['cover']:.2f} days of average demand "
+        f"({T.STATUS_LABELS[s['status']]}) [R6 / D]"
+        f"<br>On the way: {s['pipeline_end']} units [R3/R4/R10]"
+        f"<br>Delivered today: {s['delivered']} [R3] · order placed: {s['order']} [R1]"
+        f"<br>Demand seen today: {s['demand']} "
+        f"[{'D' if s['type'] == 'store' else 'R2/R8'}]"
+        + (f"<br><b>Stockout: {s['stockout']} units short [R5]</b>" if s["stockout"] > 0 else "")
+    )
+
+
+def dot_fraction(remaining: int, slots: int) -> float:
+    """Where a shipment sits on its road (0 = sender, 1 = receiver), clear of both nodes."""
+    return 0.22 + 0.56 * (1.0 - (remaining - 1) / max(slots - 1, 1))
+
+
+def road_slots(replay: Replay, road: str, ctx: Context) -> int:
+    """Number of day positions on a road: its longest lead time in this run."""
+    longest = int(replay.ships.loc[replay.ships["road"] == road, "lead_time"].max() or 0)
+    return max(ctx.road_range[road][1], longest)
+
+
 def network_map(
     replay: Replay, t: int, ctx: Context, height: int = 222, n_maps: int = 2
 ) -> dict[str, Any]:
@@ -141,7 +190,6 @@ def network_map(
         cap = ctx.cap[r["to"]]
         width = 1.2 + 8.0 * min(r["shipped"] / cap, 1.0) if r["shipped"] else 1.2
         colour = T.ALERT if r["delayed"] else (EDGE if r["shipped"] else EDGE_IDLE)
-        lo, hi = ctx.road_range[road]
         data.append({
             "type": "scatter", "x": [x0, x1], "y": [y0, y1], "mode": "lines",
             "hoverinfo": "skip", "showlegend": False,
@@ -150,12 +198,7 @@ def network_map(
         mx, my = x0 + 0.5 * (x1 - x0), y0 + 0.5 * (y1 - y0)
         anchors["x"].append(mx)
         anchors["y"].append(my)
-        anchors["text"].append(
-            f"<b>Road {road.replace('->', '→')}</b><br>Shipped today: {r['shipped']} units [R4]"
-            f"<br>Lead time: {lo} to {hi} days, mean {ctx.road_mean[road]:.1f} [R10, D]"
-            f"<br>DataCo delay label: {ctx.road_label[road]:.0%} (a label only; no rule reads it)"
-            + (f"<br><b>Transit delay active: {r['delay_text']} [S1]</b>" if r["delayed"] else "")
-        )
+        anchors["text"].append(road_hover(road, r, ctx))
         up = 1 if y1 >= y0 else -1  # put the labels on the outer side of a sloping road
         slots = max(ctx.road_range[road][1], int(longest.get(road, 0)))
         if r["shipped"]:
@@ -167,8 +210,7 @@ def network_map(
                           "text": f"<b>⚠ delay {r['delay_text']}</b>",
                           "font": {"size": 10, "color": T.ALERT}})  # fmt: skip
         for d in r["dots"]:
-            f = 0.22 + 0.56 * (1.0 - (d["remaining"] - 1) / max(slots - 1, 1))  # clear of nodes
-            many = f" in {d['shipments']} shipments" if d["shipments"] > 1 else ""
+            f = dot_fraction(d["remaining"], slots)
             dots["x"].append(x0 + f * (x1 - x0))
             dots["y"].append(y0 + f * (y1 - y0))
             dots["text"].append(str(d["remaining"]))
@@ -176,11 +218,7 @@ def network_map(
             dots["fill"].append(T.STATUS_COLOURS["low"] if d["late"] else DOT)
             dots["ink"].append(T.INK if d["late"] else "#FFFFFF")
             dots["line"].append(T.INK if d["late"] else "#FFFFFF")
-            dots["hover"].append(
-                f"<b>On the way to {r['to']}</b><br>{d['qty']} units{many}"
-                f"<br>{d['remaining']} day(s) until delivery [R10]"
-                + ("<br>Late: 5 or more days on the road [A24]" if d["late"] else "")
-            )
+            dots["hover"].append(dot_hover(r, d))
     data.append({
         "type": "scatter", "x": anchors["x"], "y": anchors["y"], "mode": "markers",
         "marker": {"size": 22, "color": "rgba(0,0,0,0)"}, "text": anchors["text"],
@@ -202,21 +240,7 @@ def network_map(
         x, y = pos[n]
         supplier = s["type"] == "supplier"
         out = s["stockout"] > 0
-        if supplier:
-            hover = (f"<b>{n}</b> · supplier (unlimited)<br>Orders received today: {s['demand']} "
-                     f"[R2]")  # fmt: skip
-        else:
-            hover = (
-                f"<b>{n}</b> · {s['type']}"
-                f"<br>Stock at end of day: {s['stock_end']} units [R6]"
-                f"<br>Cover: {s['cover']:.2f} days of average demand "
-                f"({T.STATUS_LABELS[s['status']]}) [R6 / D]"
-                f"<br>On the way: {s['pipeline_end']} units [R3/R4/R10]"
-                f"<br>Delivered today: {s['delivered']} [R3] · order placed: {s['order']} [R1]"
-                f"<br>Demand seen today: {s['demand']} "
-                f"[{'D' if s['type'] == 'store' else 'R2/R8'}]"
-                + (f"<br><b>Stockout: {s['stockout']} units short [R5]</b>" if out else "")
-            )
+        hover = node_hover(n, s)
         nd["x"].append(x)
         nd["y"].append(y)
         nd["text"].append("source" if supplier else f"{s['cover']:.1f} d")
@@ -284,9 +308,10 @@ def _window_label(replay: Replay) -> tuple[tuple[int, int] | None, bool, str]:
 
 def stock_chart(
     replays: Mapping[str, Replay], node: str, t: int, ctx: Context,
-    width: int | None = None, shade: bool = True, height: int = 236,
+    width: int | None = None, shade: bool = True, height: int = 236, transition: int = 0,
 ) -> Any:  # fmt: skip
-    """End-of-day stock per policy; days after the chosen day are faint; stockout days marked."""
+    """End-of-day stock per policy; days after the chosen day are faint; stockout days marked;
+    a dot on each line at the chosen day (D-45)."""
     fig = go.Figure()
     known = list(replays)
     for p, rp in replays.items():
@@ -296,11 +321,18 @@ def stock_chart(
         fig.add_trace(go.Scatter(
             x=future.index, y=future.to_numpy(), mode="lines", hoverinfo="skip",
             line={"color": T.rgba(colour, 0.28), "width": 1.4}, showlegend=False,
+            ids=[str(d) for d in future.index],
         ))  # fmt: skip
         fig.add_trace(go.Scatter(
             x=past.index, y=past.to_numpy(), mode="lines", name=T.policy_label(p, short=True),
+            ids=[str(d) for d in past.index],
             line={"color": colour, "width": 2},
             hovertemplate="%{y:,.0f} units [R6]<extra>" + T.policy_label(p, short=True) + "</extra>",
+        ))  # fmt: skip
+        fig.add_trace(go.Scatter(
+            x=[t], y=[stock[t]], mode="markers", hoverinfo="skip", showlegend=False,
+            marker={"size": 8, "color": colour, "line": {"width": 1.5, "color": "#FFFFFF"}},
+            name="day-marker",
         ))  # fmt: skip
         if node != STORES and ctx.types[node] != "store":
             continue
@@ -316,7 +348,8 @@ def stock_chart(
     first = next(iter(replays.values()))
     T.base_layout(fig, height, f"Stock at end of day · {node}  (× = stockout day)")
     if shade:
-        T.add_shock_band(fig, *_window_label(first))
+        T.add_shock_band(fig, *_window_label(first), day=t)
+    T.add_transition(fig, transition)
     T.add_day_line(fig, t)
     fig.update_xaxes(title_text="Simulated day",
                      range=view_range(t, first.first_day, first.last_day, width))  # fmt: skip
@@ -327,9 +360,12 @@ def stock_chart(
 def orders_chart(
     replays: Mapping[str, Replay], node: str, t: int, ctx: Context,
     width: int | None = None, shade: bool = True, moving_average: bool = True,
-    height: int = 236,
+    height: int = 236, transition: int = 0,
 ) -> Any:  # fmt: skip
-    """Orders per day as bars per policy, the demand seen as a line and its 7-day average."""
+    """Orders per day as bars per policy, the demand seen as a line and its 7-day average.
+
+    Only the days in view (and two either side) are drawn. Every bar and point carries its day
+    as its id, so a smooth move to the next day keeps each bar on its own day (D-45)."""
     fig = go.Figure()
     known = list(replays)
     first = next(iter(replays.values()))
@@ -337,9 +373,10 @@ def orders_chart(
     for p, rp in replays.items():
         colour = T.policy_colour(p, known)
         order = _series(rp, "order", node, ctx)
-        order = order[(order.index >= lo) & (order.index <= hi)]
+        order = order[(order.index >= lo - 2) & (order.index <= hi + 2)]
         fig.add_trace(go.Bar(
             x=order.index, y=order.to_numpy(), name=T.policy_label(p, short=True),
+            ids=[str(d) for d in order.index],
             marker={"color": [colour if d <= t else T.rgba(colour, 0.25) for d in order.index],
                     "line": {"width": 0}},
             hovertemplate="order %{y:,.0f} units [R1]<extra>" + T.policy_label(p, short=True)
@@ -359,13 +396,15 @@ def orders_chart(
         ):
             if dash == "dash" and not moving_average:
                 continue
-            past, future = _split_at(series[(series.index >= lo - 1) & (series.index <= hi + 1)], t)
+            past, future = _split_at(series[(series.index >= lo - 2) & (series.index <= hi + 2)], t)
             fig.add_trace(go.Scatter(
                 x=future.index, y=future.to_numpy(), mode="lines", hoverinfo="skip",
+                ids=[str(d) for d in future.index],
                 line={"color": T.rgba(colour, 0.25), "width": w, "dash": dash}, showlegend=False,
             ))  # fmt: skip
             fig.add_trace(go.Scatter(
                 x=past.index, y=past.to_numpy(), mode="lines", name=name,
+                ids=[str(d) for d in past.index],
                 line={"color": colour, "width": w, "dash": dash},
                 hovertemplate="%{y:,.0f} units [" + (tag if dash != "dash" else "from the log")
                               + "]<extra>" + name + "</extra>",
@@ -373,7 +412,8 @@ def orders_chart(
     T.base_layout(fig, height, f"Orders and demand · {node}")
     fig.update_layout(barmode="group", bargap=0.2, bargroupgap=0.0)
     if shade:
-        T.add_shock_band(fig, *_window_label(first))
+        T.add_shock_band(fig, *_window_label(first), day=t)
+    T.add_transition(fig, transition)
     T.add_day_line(fig, t)
     fig.update_xaxes(title_text="Simulated day", range=[lo, hi])
     fig.update_yaxes(title_text="Units per simulated day", rangemode="tozero")
@@ -435,6 +475,23 @@ def timeline_strip(t: int, first: int, last: int, first_decision: int,
     return "".join(parts)
 
 
+_STRIP = "<br>".join("0123456789")
+
+
+def odometer(text: str) -> str:
+    """A KPI value that rolls up to ``text`` (D-45): every digit is a column of 0 to 9 moved by
+    CSS to its digit, so the animation always ends on the exact text. The plain text is kept
+    in the page for screen readers, copying and the tests; the rolling copy is hidden from them.
+    """
+    parts = []
+    for i, ch in enumerate(text):
+        if ch.isdigit():
+            parts.append(f'<span class="od" style="--d:{ch};--i:{i}"><span>{_STRIP}</span></span>')
+        else:
+            parts.append(f'<span class="oc">{ch}</span>')
+    return f'<span class="sr">{text}</span><span class="odo" aria-hidden="true">{"".join(parts)}</span>'
+
+
 def kpi_html(cards: Sequence[Mapping[str, Any]], known: Sequence[str], reference: str) -> str:
     """The KPI cards as one HTML grid; numbers are formatted from ``derive.kpi_cards``."""
     from supply_chain_rl.dashboard.derive import fmt_metric
@@ -463,7 +520,7 @@ def kpi_html(cards: Sequence[Mapping[str, Any]], known: Sequence[str], reference
                 f'<div class="row"><span class="dot" style="background:'
                 f'{T.policy_colour(r["policy"], known)}"></span>'
                 f'<span class="name">{T.policy_label(r["policy"], short=True)}</span>'
-                f'<span class="val">{mean}</span><span class="sd">{sd}</span>'
+                f'<span class="val">{odometer(mean)}</span><span class="sd">{sd}</span>'
                 f'<span class="delta {cls}">{delta}</span></div>'
             )
         out.append("</div>")

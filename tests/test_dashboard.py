@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import math
+import re
 import time
 from typing import Any
 
@@ -19,7 +21,7 @@ import pytest
 import yaml
 
 from supply_chain_rl.config import Config
-from supply_chain_rl.dashboard import custom, derive, store
+from supply_chain_rl.dashboard import custom, derive, scene3d, store
 from supply_chain_rl.dashboard import figures as F
 from supply_chain_rl.dashboard import theme as T
 from supply_chain_rl.eval.run import evaluate, write_results
@@ -708,3 +710,325 @@ def test_app_renders_every_panel_and_updates_in_under_a_second() -> None:
     assert "shock active" not in " ".join(str(m.value) for m in at.markdown)
     at.slider[0].set_value(1752).run()
     assert "shock active" in " ".join(str(m.value) for m in at.markdown)
+    # the 3D scene instead of the 2D maps (D-43), small and expanded; the charts stay
+    n_plots = len(at.get("plotly_chart"))
+    at.session_state.net_view = "3D scene"
+    at.run()
+    assert not at.exception and len(at.get("plotly_chart")) == n_plots - 2
+    assert "Height = days of cover" in " ".join(str(m.value) for m in at.markdown)
+    at.session_state.expand3d = True
+    at.run()
+    assert not at.exception and at.session_state.cur_day == 1752
+
+
+# ------------------------------------------------------- 3D scene and the visual upgrade (D-43+)
+
+
+def _in_transit_from_csv(path: Any, day: int) -> pd.DataFrame:
+    """Shipments on the road at the end of ``day``, read from the shipments file directly."""
+    s = pd.read_csv(path)
+    s = s[(s["t"] <= day) & (s["arrival"] > day)].copy()
+    s["remaining"] = s["arrival"] - day
+    return s
+
+
+def test_scene3d_equals_log_on_three_random_days(bundle: Bundle) -> None:
+    """D-44 with R5, R6, R10, D-39 and A27: on three random days the 3D scene shows the log's
+    end-of-day stock, cover, cover status and stockouts, and exactly the shipments on the road
+    (units, days remaining, late flag), for every policy and two scenarios."""
+    rng = np.random.default_rng(11)
+    ctx = bundle.ctx
+    for sid in ("transit_delay", "demand_spike"):
+        days = rng.choice(np.arange(81 + 6, DAYS + 1), size=3, replace=False)
+        for p in POLICIES:
+            rp = bundle.replay(sid, p)
+            raw = pd.read_csv(store.log_path(bundle.paths, "test", sid, p, 1))
+            ship_path = store.log_path(bundle.paths, "test", sid, p, 1).with_name(
+                f"{p}_s1_shipments.csv"
+            )
+            for t in (int(d) for d in days):
+                spec = scene3d.scene_spec(rp, t, ctx)
+                assert spec["day"] == t and spec["policy"] == p
+                today = raw[raw["t"] == t].set_index("node")
+                for n in spec["nodes"]:
+                    row = today.loc[n["id"]]
+                    if n["type"] == "supplier":
+                        assert n["status"] == "none" and n["cover"] is None and n["days"] == 0
+                        continue
+                    cover = row["stock_end"] / ctx.avg_d[n["id"]]
+                    assert n["stock"] == row["stock_end"] and n["stockout"] == row["stockout"]
+                    assert n["cover"] == pytest.approx(cover, abs=1e-4)
+                    assert n["status"] == derive.cover_status(cover, n["type"], ctx)
+                    assert n["colour"] == T.STATUS_COLOURS[n["status"]]
+                    assert n["days"] == pytest.approx(min(cover, scene3d.CAP_DAYS))
+                    assert n["cover_text"] == f"{cover:.1f}"  # the 2D map's rounding
+                moving = _in_transit_from_csv(ship_path, t)
+                for r in spec["roads"]:
+                    on_road = moving[moving["road"] == r["id"]]
+                    want = {
+                        f"{r['id']}|{t + int(rem)}": int(g["qty"].sum())
+                        for rem, g in on_road.groupby("remaining")
+                    }
+                    assert {d["key"]: d["qty"] for d in r["dots"]} == want
+                    for d in r["dots"]:
+                        g = on_road[on_road["arrival"] == d["arrival"]]
+                        assert d["remaining"] == d["arrival"] - t and d["shipments"] == len(g)
+                        mean = round(ctx.road_mean[r["id"]])
+                        assert d["late"] == bool(
+                            ((g["lead_time"] > mean) & (g["initial"] == 0)).any()
+                        )
+                assert sum(d["qty"] for r in spec["roads"] for d in r["dots"]) == int(
+                    today["pipeline_end"].sum()
+                )
+                json.dumps(spec, allow_nan=False)  # plain JSON for the component, no NaN
+
+
+def test_scene3d_height_is_days_of_cover_capped_at_eight(bundle: Bundle) -> None:
+    """D-44: tower height = days of cover capped at 8 days; a taller tower is flagged for its cap
+    marker; the units are printed on the tower; the ruler is in days and ends at the cap."""
+    assert scene3d.CAP_DAYS == 8 and scene3d.RULER_DAYS[-1] == 8
+    assert scene3d.tower_days(3.25) == 3.25 and scene3d.tower_days(12.0) == 8.0
+    assert scene3d.tower_days(0.0) == 0.0 and scene3d.tower_days(float("nan")) == 0.0
+    rp = bundle.replay("control", "warmup")
+    cover = rp.cover[list(bundle.ctx.stocking())]
+    t, n = next(
+        ((int(t), n) for t in cover.index for n in cover.columns if cover.loc[t, n] > 8),
+        (None, None),
+    )
+    if t is None:  # the synthetic run may never go above the cap: check the flag on a lowered cap
+        t, n = int(cover.index[-1]), str(cover.columns[0])
+    spec = scene3d.scene_spec(rp, t, bundle.ctx)
+    node = next(x for x in spec["nodes"] if x["id"] == n)
+    assert node["capped"] == (cover.loc[t, n] > 8)
+    assert node["days"] == min(cover.loc[t, n], 8.0)
+    assert spec["cap_days"] == 8 and spec["ruler"] == [2, 4, 6, 8]
+    from supply_chain_rl.dashboard.component import FRONTEND
+
+    code = (FRONTEND / "network3d.js").read_text(encoding="utf-8")
+    assert "${n.stock_text} u<br>" in code  # units on every tower's label
+    assert node["stock_text"] == f"{node['stock']:,}"
+
+
+def test_scene3d_hover_equals_the_2d_map(bundle: Bundle) -> None:
+    """D-42 (d): the 3D scene's hover text, with its source tags, is the 2D map's text."""
+    ctx = bundle.ctx
+    rp = bundle.replay("transit_delay", "movavg")
+    t = WINDOW[0] + 2
+    spec = scene3d.scene_spec(rp, t, ctx)
+    fig = F.network_map(rp, t, ctx)
+    texts: list[str] = []
+    for tr in fig["data"]:
+        texts += list(tr.get("customdata") or []) + list(tr.get("text") or [])
+    for n in spec["nodes"]:
+        assert n["hover"] in texts and "[R" in n["hover"]
+    for r in spec["roads"]:
+        assert r["hover"] in texts
+        for d in r["dots"]:
+            assert d["hover"] in texts and "[R10]" in d["hover"]
+
+
+def test_scene3d_shipments_move_and_are_sized_by_units(bundle: Bundle) -> None:
+    """D-44: a shipment keeps its key (road and arrival day) from day to day and moves towards the
+    receiver at the 2D map's positions; its size grows with its units (volume in proportion)."""
+    ctx = bundle.ctx
+    rp = bundle.replay("transit_delay", "basestock")
+    t = WINDOW[0] + 1
+    a, b = scene3d.scene_spec(rp, t, ctx), scene3d.scene_spec(rp, t + 1, ctx)
+    da = {d["key"]: d for r in a["roads"] for d in r["dots"]}
+    db = {d["key"]: d for r in b["roads"] for d in r["dots"]}
+    both = [k for k in da if k in db]
+    assert both
+    for k in both:
+        assert db[k]["remaining"] == da[k]["remaining"] - 1 and db[k]["f"] > da[k]["f"]
+    assert all(0.2 <= d["f"] <= 0.8 for d in da.values())
+    assert scene3d.dot_size(0, 100.0) == 0.0
+    assert scene3d.dot_size(50, 100.0) < scene3d.dot_size(100, 100.0) < scene3d.dot_size(200, 100.0)
+    assert scene3d.dot_size(800, 100.0) == scene3d.dot_size(200, 100.0)  # stops at twice the cap
+    double = scene3d.dot_size(20, 10.0) / scene3d.dot_size(10, 10.0)  # twice the units
+    assert double == pytest.approx(2.0 ** (1 / 3), abs=1e-3)  # twice the volume
+
+
+def test_scene3d_shock_and_transition_rules(bundle: Bundle) -> None:
+    """S1 and S2: the delayed road and the spiked store are marked only while the shock is
+    active, with the 2D map's wording. D-45: no movement on a new run, shorter than a frame
+    while playing."""
+    ctx = bundle.ctx
+    rp = bundle.replay("transit_delay", "basestock")
+    roads = {r["id"]: r for r in scene3d.scene_spec(rp, WINDOW[0] + 2, ctx)["roads"]}
+    assert roads["W1->St1"]["delayed"] and roads["W1->St1"]["delay_text"] == "+3 days"
+    assert not roads["W1->St2"]["delayed"]
+    after = {r["id"]: r for r in scene3d.scene_spec(rp, WINDOW[1] + 1, ctx)["roads"]}
+    assert not after["W1->St1"]["delayed"]
+    spike = scene3d.scene_spec(bundle.replay("demand_spike", "movavg"), WINDOW[0], ctx)
+    assert next(n for n in spike["nodes"] if n["id"] == "St1")["shocks"] == ["demand x1.5"]
+    assert scene3d.transition_ms(False, 1, False) == 0
+    assert scene3d.transition_ms(False, 1, True) == 450
+    assert scene3d.transition_ms(True, 1, True) == 450
+    assert scene3d.transition_ms(True, 5, True) == 160 < 1000 / 5
+    pal = scene3d.palette()
+    assert pal["alert"] == T.ALERT and pal["late"] == T.STATUS_COLOURS["low"]
+
+
+def test_component_is_offline_and_pinned() -> None:
+    """D-43: the component loads three.js r170 from its own folder (no network), with the MIT
+    licence kept next to it."""
+    from supply_chain_rl.dashboard.component import FRONTEND
+
+    html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+    assert (
+        "http://" not in html and "https://" not in html and "./vendor/three.module.min.js" in html
+    )
+    lib = (FRONTEND / "vendor" / "three.module.min.js").read_text(encoding="utf-8")
+    assert 'const t="170"' in lib[:2000]
+    assert "MIT" in (FRONTEND / "vendor" / "LICENSE-three.txt").read_text(encoding="utf-8")
+    for name in ("OrbitControls.js", "CSS2DRenderer.js"):
+        code = (FRONTEND / "vendor" / name).read_text(encoding="utf-8")
+        assert "from 'three'" in code and "https://" not in code
+
+
+def test_kpi_count_up_ends_on_the_exact_value(bundle: Bundle) -> None:
+    """D-45: the rolling KPI value ends on the text from results.csv: every digit column stops at
+    its digit; the plain value is in the page for reading and copying."""
+    cards = derive.kpi_cards(store.load_results(bundle.paths, "test", "control"), POLICIES,
+                             "basestock")  # fmt: skip
+    html = F.kpi_html(cards, POLICIES, "basestock")
+    for card in cards:
+        for r in card["rows"]:
+            text = derive.fmt_metric(r["mean"], card["kind"])
+            assert f'<span class="sr">{text}</span>' in html
+            assert F.odometer(text) in html
+    roll = F.odometer("12,345.6%")
+    digits = [int(x) for x in re.findall(r"--d:(\d)", roll)]
+    assert digits == [1, 2, 3, 4, 5, 6]
+    assert roll.count('class="oc"') == 3 and 'aria-hidden="true"' in roll
+    assert "prefers-reduced-motion" in T.CSS and "translateY(calc(var(--d) * -10%))" in T.CSS
+
+
+def test_charts_day_marker_band_and_transition(bundle: Bundle) -> None:
+    """D-45: a dot on each stock line at the chosen day equals the log (R6); the day is labelled
+    on the axis; the window band is lighter while the day is outside it; the charts move
+    smoothly only when asked; every bar carries its day as its id, so no bar slides to another
+    day during the move."""
+    ctx = bundle.ctx
+    replays = {p: bundle.replay("transit_delay", p) for p in ("basestock", "movavg")}
+    for t in (WINDOW[0] - 5, WINDOW[0] + 3):
+        fig = F.stock_chart(replays, "St1", t, ctx, 30, transition=300)
+        for p, rp in replays.items():
+            dot = next(tr for tr in fig.data
+                       if tr.name == "day-marker" and tr.marker.color == T.policy_colour(p))  # fmt: skip
+            assert list(dot.x) == [t] and dot.y[0] == rp.cols["stock_end"].loc[t, "St1"]
+        assert any(a.text == f"<b>{t}</b>" for a in fig.layout.annotations)
+        band = next(s for s in fig.layout.shapes if s.type == "rect")
+        inside = WINDOW[0] <= t <= WINDOW[1]
+        assert band.fillcolor == (T.SHOCK_FILL if inside else T.SHOCK_FILL_IDLE)
+        assert (band.x0, band.x1) == (WINDOW[0] - 0.5, WINDOW[1] + 0.5)  # edges never move
+        assert fig.layout.transition.duration == 300
+    still = F.orders_chart(replays, "St1", 120, ctx, 30)
+    assert still.layout.transition.duration == 0
+    for tr in still.data:
+        assert list(tr.ids) == [str(d) for d in tr.x]  # object constancy by day
+    bars = next(tr for tr in still.data if tr.type == "bar")
+    lo, hi = F.view_range(120, 81, DAYS, 30)
+    assert min(bars.x) >= lo - 2 and max(bars.x) <= hi + 2
+    assert still.layout.xaxis.unifiedhovertitle.text == "<b>Simulated day %{x}</b>"
+
+
+def _browser() -> Any:
+    """Microsoft Edge or Chrome through playwright, or None."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return None
+    pw = sync_playwright().start()
+    for channel in ("msedge", "chrome"):
+        try:
+            return pw, pw.chromium.launch(channel=channel)
+        except Exception:  # noqa: BLE001  (try the next installed browser)
+            continue
+    pw.stop()
+    return None
+
+
+HOST = """<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">
+<iframe id="f" src="n3d/index.html" style="border:0;width:660px;height:222px"></iframe>
+<script>window.ready = false; window.addEventListener('message', ev => {
+  if (ev.data.type === 'streamlit:componentReady') window.ready = true; });
+window.send = spec => document.getElementById('f').contentWindow.postMessage(
+  {type: 'streamlit:render', args: {spec}}, '*');</script></body></html>"""
+
+
+def test_scene3d_draws_what_the_log_says_in_a_browser(
+    bundle: Bundle, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """D-44 in the browser: on three random days the drawn towers (height in days, filled or
+    an empty outline with a marker, colour, label) and the drawn shipments (position, size, late
+    shape, days label) equal the scene values, which equal the log (test above); after a smooth
+    move to the next day the end state is exact and delivered shipments are gone."""
+    import functools
+    import http.server
+    import shutil
+    import threading
+
+    from supply_chain_rl.dashboard.component import FRONTEND
+
+    got = _browser()
+    if got is None:
+        pytest.skip("needs playwright and an installed Microsoft Edge or Chrome")
+    pw, browser = got
+    root = tmp_path_factory.mktemp("n3d_host")
+    shutil.copytree(FRONTEND, root / "n3d")
+    (root / "host.html").write_text(HOST, encoding="utf-8")
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
+    handler.log_message = lambda *a, **k: None
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    ctx = bundle.ctx
+    rng = np.random.default_rng(5)
+    try:
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{server.server_address[1]}/host.html")
+        page.wait_for_function("window.ready", timeout=30_000)
+        frame = page.frames[1]
+        for sid, p in (("transit_delay", "basestock"), ("demand_spike", "movavg")):
+            rp = bundle.replay(sid, p)
+            short = rp.cols["stockout"][ctx.stores()]
+            out_day = int(short.index[(short > 0).any(axis=1)][0])  # a stockout day is included
+            days = [out_day, *(int(d) for d in rng.choice(np.arange(87, DAYS), 2, replace=False))]
+            for t in days:
+                for step, ms in ((t, 0), (t + 1, 250)):
+                    spec = scene3d.scene_spec(rp, step, ctx, run=f"{sid}/{p}", transition=ms)
+                    page.evaluate("s => window.send(s)", spec)
+                    frame.wait_for_function(f"window.__drawn && window.__drawn().day === {step} "
+                                            "&& !window.__drawn().moving", timeout=10_000)  # fmt: skip
+                    page.wait_for_timeout(30)
+                    drawn = frame.evaluate("window.__drawn()")
+                    _check_drawn(drawn, spec)
+    finally:
+        server.shutdown()
+        browser.close()
+        pw.stop()
+
+
+def _check_drawn(drawn: dict[str, Any], spec: dict[str, Any]) -> None:
+    for n in spec["nodes"]:
+        d = drawn["towers"][n["id"]]
+        if n["type"] == "supplier":
+            continue
+        out = n["stockout"] > 0
+        assert d["outline"] == out and d["marker"] == out  # never colour alone (D-39, D-44)
+        assert d["filled"] == (n["stock"] > 0)
+        if n["stock"] > 0:
+            assert d["days"] == pytest.approx(n["days"], abs=1e-3)
+            assert d["colour"] == n["colour"].upper()
+        assert d["capped"] == (n["capped"] and not out)
+        assert f"{n['stock']:,} u" in d["label"]
+        assert f"{n['cover_text']} d cover" in d["label"]
+        if out:
+            assert f"stockout {n['stockout']} u" in d["label"]
+    want = {d["key"]: d for r in spec["roads"] for d in r["dots"]}
+    assert set(drawn["dots"]) == set(want)
+    for k, d in want.items():
+        got = drawn["dots"][k]
+        assert got["f"] == pytest.approx(d["f"], abs=1e-6)
+        assert got["size"] == pytest.approx(d["size"], abs=1e-6)
+        assert got["late"] == d["late"] and got["label"] == str(d["remaining"])

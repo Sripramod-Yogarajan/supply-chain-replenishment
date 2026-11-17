@@ -159,9 +159,8 @@ columns), A27 (late means 5 days or more), A28 (one replayed run against 20-seed
 
 ## Open items
 
-1. **A27 needs the owner's confirmation.** A24 says "above the mean of its road (5 or 6 days)".
-   The mean is 3.99, so the literal reading would also call 4-day deliveries late. The dashboard
-   uses 5 days or more.
+1. ~~A27 needs the owner's confirmation.~~ **Closed 2026-11-17:** the owner confirmed that a
+   delivery is late at 5 days or more (A27 accepted).
 2. The combined scenario (D-34) is not defined; the custom form takes one shock.
 3. Result files left at the top level of `results/` by earlier runs are stale; the current ones
    are in `results/test/` and `results/val/`. They were not deleted.
@@ -170,3 +169,119 @@ columns), A27 (late means 5 days or more), A28 (one replayed run against 20-seed
 5. `explanation.md` does not describe Phase 4 yet.
 6. `requirements.lock` is still the Phase 0 list; D-38 regenerates it at the start of Phase 5,
    and it will then include `streamlit` and `playwright`.
+
+## Visual upgrade (Phase 4 extension, 2026-11-17)
+
+A 3D network scene beside the 2D map, livelier 2D charts and KPI cards, and tracked screenshots.
+No number shown by the dashboard changed; nothing in the simulator, the harness or the result
+files changed. Decisions D-43 (library), D-44 (3D encoding, with the owner's change to tower
+height = days of cover), D-45 (2D charts and KPI cards), D-46 (tracked screenshots).
+
+### What was built
+
+| File | Role |
+| --- | --- |
+| `dashboard/scene3d.py` | Every value of the 3D scene for one day, from `figures.map_state` (the 2D map's source): towers in days of cover capped at 8, units and cover text, stockout, cap flag, roads, shipments keyed by road and arrival day, sizes, hover text, transition length. |
+| `dashboard/network3d/` | The component's page and `network3d.js` (three.js scene: towers, outlines, arcs, shipments, labels with overlap avoidance, hover, camera, reset, eased moves), and three.js r170 in `vendor/` with its MIT licence. |
+| `dashboard/component.py` | The Streamlit component (protocol version 1, no npm helper, no build step). |
+| `dashboard/figures.py` | Hover text shared by the 2D map and the 3D scene; day dot on the stock lines; day ids on bars and points; KPI odometer. |
+| `dashboard/theme.py` | Day label on the day line, day-aware shock band, transitions, unified hover title, odometer CSS. |
+| `dashboard/screenshots.py` | 3D, expanded and hover screenshots; curated copy to `docs/screenshots/`; 3D step timing with two, three and four policies (four: placeholder `ppo` in a temporary folder). |
+| `app/dashboard.py` | "Network" switch (2D map or 3D scene) and "Expand 3D view" in the sidebar; transition lengths; day-independent panels built once per run. |
+| `pyproject.toml` | The component's files are package data. |
+| Tests | 9 new in `test_dashboard.py`; the app test also opens the 3D and expanded views. |
+
+### Checkpoint of the extension
+
+| # | Item | Result | Evidence |
+| --- | --- | --- | --- |
+| V1 | The 3D scene shows the log's stock, cover status, stockouts and shipments on three random days | PASS | `test_scene3d_equals_log_on_three_random_days` (two scenarios, three policies, values against the log and shipments files read directly; R5, R6, R10, D-39, A27). `test_scene3d_draws_what_the_log_says_in_a_browser`: what three.js actually drew (tower height in days, filled or outlined, marker, colour, label; shipment position, size, late shape, days label) equals those values on three random days including a stockout day, before and after an eased move. |
+| V2 | Tower height = days of cover capped at 8, units printed, cap marker | PASS | `test_scene3d_height_is_days_of_cover_capped_at_eight`; browser test checks the drawn height and label. |
+| V3 | Stockout not shown by colour alone | PASS | Empty outlined tower, red cone and "▼ stockout n u"; browser test asserts outline and marker on every stockout. |
+| V4 | Hover shows the same values and source tags as the 2D map and day table | PASS | `test_scene3d_hover_equals_the_2d_map`; `03_3d_scene_hover.png`. |
+| V5 | Late deliveries and the shocked road use the existing styling | PASS | `test_scene3d_shock_and_transition_rules`; amber late cubes and dashed vermilion road in the screenshots. |
+| V6 | 2D charts livelier, every value still read off its axis | PASS | `test_charts_day_marker_band_and_transition`: day dot equals the log, band edges fixed, ids keep bars on their day, transitions only when asked. Existing chart tests unchanged and passing. |
+| V7 | KPI count-up ends on the exact value | PASS | `test_kpi_count_up_ends_on_the_exact_value`; `test_kpi_cards_equal_results_csv` unchanged and passing. |
+| V8 | A one-day step redraws everything in under one second, with two, three and four policies | PASS | Table "Performance with the 3D scene" below. |
+| V9 | First screen fits 1366 x 768 | PASS | Table "Layout" below. |
+| V10 | Same policy colours, cover ramp and shock styling | PASS | Colours come from `theme` (`scene3d.palette`); `test_scene3d_shock_and_transition_rules` checks the palette. |
+| V11 | The component works offline and is pinned | PASS | `test_component_is_offline_and_pinned`. |
+
+`pytest`: 202 passed (9 new). `ruff check`, `ruff format --check` and `mypy` (strict) clean.
+
+### Performance with the 3D scene
+
+Browser (`dashboard.screenshots`), transit delay, 10 one-day steps each, cached logs. "New day
+drawn": until the day label, every 3D scene and both time charts show the new day. "Move ended":
+until the 3D scenes have finished easing to it.
+
+| View | New day drawn, median / max | Move ended, median / max |
+| --- | --- | --- |
+| 2D map, two policies (all panels, as in Phase 4) | 196 / 229 ms | n/a |
+| 3D scene, two policies | 480 / 533 ms | 590 / 601 ms |
+| 3D scene, three policies | 526 / 576 ms | 621 / 657 ms |
+| 3D scene, four policies (placeholder `ppo`, not kept) | 537 / 654 ms | 637 / 679 ms |
+
+The 3D scenes themselves received the new day about 120 to 280 ms after the key press; the rest is the
+page run and the two time charts, which appear when the page run ends. Two fixes were needed to
+stay under one second: the day-independent panels are built once per run (D-45 e), and the
+orders chart draws only the days in view (with day ids) instead of the whole run. A first
+measurement also showed a cold first step of 1.1 to 1.9 s in a freshly started server; it came
+from Plotly loading its transition support on the first move and was removed by always setting
+the transition (0 ms when nothing moves). Page run without a browser (`dashboard.timing`, two
+policies): median 373 ms on this machine today, against 365 ms for the code before the extension
+measured the same way the same day (the Phase 4 figure of 278 ms was taken on a less loaded
+machine). Play at 1x advanced about one simulated day per second with the scenes following (checked in
+the browser, no errors).
+
+### Layout at 1366 x 768
+
+| View | Bottom edge (px) | Fits in 768 |
+| --- | --- | --- |
+| 2D map, control and each shock, two policies | 715 | yes (unchanged) |
+| 2D map, three / four policies | 734 / 752 | yes (unchanged) |
+| 3D scene, control and each shock, two policies | 699 | yes |
+| 3D scene, three / four policies | 717 / 736 | yes |
+
+### Screenshots (tracked, D-46)
+
+| View | File |
+| --- | --- |
+| 3D scene, first screen | ![3D](../docs/screenshots/01_3d_scene_transit_delay.png) |
+| 3D scene expanded | ![expanded](../docs/screenshots/02_3d_scene_expanded.png) |
+| Hover on St2 | ![hover](../docs/screenshots/03_3d_scene_hover.png) |
+| 2D map | ![2D](../docs/screenshots/04_2d_map_transit_delay.png) |
+| Demand spike | ![spike](../docs/screenshots/05_3d_scene_demand_spike.png) |
+| Three policies | ![three](../docs/screenshots/06_3d_scene_three_policies.png) |
+| Comparison table | ![comparison](../docs/screenshots/07_comparison_table.png) |
+| Bullwhip chart | ![bullwhip](../docs/screenshots/08_bullwhip_chart.png) |
+
+### Review of the screenshots
+
+Several rounds. Fixed between rounds: the first screen ran past 768 px (3D panel 240 px and a
+two-line legend; now 222 px and one line, expand control moved to the sidebar); the KPI rows grew
+by about 9 px through the odometer's vertical offset (four policies in 2D no longer fitted; now
+back to 752 px); the cap line ran into the panel title; the expanded view cut the supplier off and
+left the scene small (narrow frames now use a corner camera fitted to the frame); St1's label sat
+under St2's when St1's tower was short (stores now set diagonally, and overlapping labels move
+apart); the stockout label hid behind St2's label (now part of St1's own label, above a red cone);
+the ruler's "0" tick touched the supplier label (ruler now in days from 2 up, labels at the left);
+the hover screenshot caught a road instead of a tower; scene labels showed through the tooltip.
+Found by the browser test: the 3D label rounded a cover of 1.25 to "1.3" (JavaScript) while the
+2D map printed "1.2" (Python); label numbers are now formatted in Python for both views.
+
+Remaining, accepted:
+
+- With three or four policies the small 3D scenes are dense (labels close together, shipment day
+  numbers shown on hover only below 420 px width). The 2D map or "Expand 3D view" is the better
+  choice there; two scenes, the default, are clear.
+- On days with low stock the upper part of a scene is empty up to the 8-day ruler; this is the
+  fixed scale that makes days comparable, and towers fill it on well-stocked days.
+- The three.js code is not type-checked; the browser test is its check, and it is skipped on a
+  machine without Edge or Chrome.
+
+### Not included
+
+The optional 3D summary view (a surface of stock by node and day) was left out, as recommended in
+the plan and agreed by the owner: with three stocking nodes a surface would show invented values
+between St1 and St2, and the 2D stock chart already shows the same series exactly.

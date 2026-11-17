@@ -7,7 +7,7 @@ The page only arranges panels. Reading is in ``supply_chain_rl.dashboard.store``
 except through the evaluation harness when a custom shock is run.
 
 Optional query parameters set the first view (used for screenshots):
-``?scenario=transit_delay&day=1755&with=movavg&more=warmup``.
+``?scenario=transit_delay&day=1755&with=movavg&more=warmup&view=3d&expand=1``.
 """
 
 from __future__ import annotations
@@ -22,9 +22,10 @@ import pandas as pd
 import streamlit as st
 
 from supply_chain_rl.config import Config, load_config
-from supply_chain_rl.dashboard import custom, derive, store
+from supply_chain_rl.dashboard import custom, derive, scene3d, store
 from supply_chain_rl.dashboard import figures as F
 from supply_chain_rl.dashboard import theme as T
+from supply_chain_rl.dashboard.component import network3d
 from supply_chain_rl.eval.runner import load_tuned
 from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH
 from supply_chain_rl.sim.data import SimData, load_sim_data
@@ -94,6 +95,35 @@ def get_replay(split: str, sid: str, policy: str, seed: int) -> derive.Replay:
 
 def get_results(split: str, sid: str) -> pd.DataFrame:
     return results_of(split, sid, _stamp(store.results_dir(PATHS, split, sid) / "results.csv"))
+
+
+# Panels that depend on the run but not on the day are built once per run (D-45: keeps a
+# one-day step under one second with the 3D scene); they are the same functions on the same file.
+
+
+def _results_stamp(split: str, sid: str) -> float:
+    return _stamp(store.results_dir(PATHS, split, sid) / "results.csv")
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def kpi_block(split: str, sid: str, chosen: tuple[str, ...], ref: str,
+              available: tuple[str, ...], stamp: float) -> str:  # fmt: skip
+    cards = derive.kpi_cards(results_of(split, sid, stamp), list(chosen), ref)
+    return F.kpi_html(cards, list(available), ref)
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def comparison_of(
+    split: str, sid: str, chosen: tuple[str, ...], window: str, stamp: float
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    rows = derive.comparison_rows(results_of(split, sid, stamp), list(chosen), window)
+    return rows, derive.comparison_text(rows, {p: T.policy_label(p) for p in chosen})
+
+
+@st.cache_resource(show_spinner=False, max_entries=32)
+def bullwhip_of(split: str, sid: str, chosen: tuple[str, ...], stamp: float) -> tuple[Any, Any]:
+    levels = derive.bullwhip_levels(results_of(split, sid, stamp), list(chosen))
+    return levels, F.bullwhip_chart(levels, list(chosen))
 
 
 cfg, data, ctx = base()
@@ -169,6 +199,18 @@ with st.sidebar:
     chosen = [p for p in available if p in chosen]  # registry order
     chosen.sort(key=lambda p: p != ref)  # the reference first
 
+    st.markdown('<p class="scd-side-h">Network</p>', unsafe_allow_html=True)
+    views = ["2D map", "3D scene"]
+    if "net_view" not in ss:
+        ss.net_view = views[1] if qp.get("view") == "3d" else views[0]
+        ss.expand3d = qp.get("expand") == "1"
+    view = st.segmented_control("Network view", views, key="net_view", width="stretch",
+                                label_visibility="collapsed") or views[0]  # fmt: skip
+    if view == "3D scene":
+        st.toggle("Expand 3D view", key="expand3d",
+                  help="Show the 3D scene large for a demonstration: the reference policy and "
+                       "the compared one side by side.")  # fmt: skip
+
     st.markdown('<p class="scd-side-h">Charts</p>', unsafe_allow_html=True)
     node = st.selectbox("Node in the stock and orders charts", F.node_options(ctx), key="node")
     follow = st.toggle("Follow the day (60-day view)", value=True, key="follow",
@@ -191,7 +233,16 @@ if ss.get("run_key") != (split, sid):  # a new run: start where the story starts
     ss.playing = False
 ss.cur_day = max(first, min(last, int(ss.cur_day)))
 if ss.get("advance") and ss.get("playing"):
-    ss.cur_day = min(last, ss.cur_day + 1)
+    # Keep to the chosen speed in simulated days per second: when a frame takes longer than one
+    # day at that speed, the replay moves on by more than one day (the skipped days stay in the
+    # charts; only the map and the table do not stop on them).
+    now = time.perf_counter()
+    due = (now - ss.get("play_clock", now)) * float(ss.get("speed") or SPEEDS[0])
+    due += ss.get("play_carry", 0.0)
+    jump = max(1, int(due))
+    ss.play_carry = min(max(due - jump, 0.0), 1.0)
+    ss.play_clock = now
+    ss.cur_day = min(last, ss.cur_day + jump)
 ss.advance = False
 if ss.cur_day >= last:
     ss.playing = False
@@ -209,6 +260,7 @@ def _step(delta: int) -> None:
 
 def _toggle_play() -> None:
     ss.playing = not ss.get("playing", False)
+    ss.play_clock, ss.play_carry = time.perf_counter(), 0.0
     if ss.playing and ss.cur_day >= last:
         ss.cur_day = first
 
@@ -254,7 +306,7 @@ c[4].button("", icon=":material/last_page:", on_click=_goto, args=(last,), help=
             width="stretch", key="b_last")  # fmt: skip
 speed = c[5].segmented_control(
     "Speed", SPEEDS, default=SPEEDS[0], key="speed", label_visibility="collapsed",
-    format_func=lambda s: f"{s}x", help="Simulated days per second (target)",
+    format_func=lambda s: f"{s}x", help="Simulated days per second",
 )  # fmt: skip
 with c[6]:
     st.slider("Simulated day", first, last, key="day_slider", on_change=_slider_moved,
@@ -265,23 +317,43 @@ with c[6]:
 # ----------------------------------------------------------------------------- KPI cards
 
 results = get_results(split, sid)
-cards = derive.kpi_cards(results, chosen, ref)
-st.markdown(F.kpi_html(cards, available, ref), unsafe_allow_html=True)
+rstamp = _results_stamp(split, sid)
+st.markdown(kpi_block(split, sid, tuple(chosen), ref, tuple(available), rstamp),
+            unsafe_allow_html=True)  # fmt: skip
 
 # --------------------------------------------------------------------------- maps, charts
 
-map_cols = st.columns(len(chosen))
-for col, p in zip(map_cols, chosen, strict=True):
-    col.plotly_chart(F.network_map(replays[p], day, ctx, n_maps=len(chosen)), key=f"map_{p}",
-                     config=T.MAP_CONFIG, theme=None)  # fmt: skip
-st.markdown(F.map_legend_html(ctx), unsafe_allow_html=True)
+# Smooth moves between days (D-45): only within one run; while playing, shorter than a frame.
+same_run = ss.get("shown_run") == (split, sid, tuple(chosen))
+ss.shown_run = (split, sid, tuple(chosen))
+move_ms = scene3d.transition_ms(bool(ss.get("playing")), float(speed or SPEEDS[0]), same_run)
+
+
+if view == "3D scene":
+    expanded = bool(ss.get("expand3d"))
+    shown = chosen[:2] if expanded else chosen
+    height = scene3d.HEIGHT_EXPANDED if expanded else scene3d.HEIGHT
+    for col, p in zip(st.columns(len(shown)), shown, strict=True):
+        with col:
+            network3d(scene3d.scene_spec(replays[p], day, ctx, run=f"{split}/{sid}/{p}",
+                                         height=height, transition=move_ms), key=f"net3d_{p}")  # fmt: skip
+    st.markdown(scene3d.legend_html(ctx), unsafe_allow_html=True)
+else:
+    map_cols = st.columns(len(chosen))
+    for col, p in zip(map_cols, chosen, strict=True):
+        col.plotly_chart(F.network_map(replays[p], day, ctx, n_maps=len(chosen)), key=f"map_{p}",
+                         config=T.MAP_CONFIG, theme=None)  # fmt: skip
+    st.markdown(F.map_legend_html(ctx), unsafe_allow_html=True)
 
 width = int(dash.get("chart_window_days", 60)) if follow else None
+chart_ms = min(move_ms, 350)
 left, right = st.columns(2)
-left.plotly_chart(F.stock_chart(replays, node, day, ctx, width, shade), key="stock",
-                  config=T.PLOT_CONFIG, theme=None)  # fmt: skip
-right.plotly_chart(F.orders_chart(replays, node, day, ctx, width, shade, show_ma), key="orders",
-                   config=T.PLOT_CONFIG, theme=None)  # fmt: skip
+left.plotly_chart(F.stock_chart(replays, node, day, ctx, width, shade, transition=chart_ms),
+                  key="stock", config=T.PLOT_CONFIG, theme=None)  # fmt: skip
+right.plotly_chart(
+    F.orders_chart(replays, node, day, ctx, width, shade, show_ma, transition=chart_ms),
+    key="orders", config=T.PLOT_CONFIG, theme=None,
+)  # fmt: skip
 
 # ---------------------------------------------------------------------------------- tabs
 
@@ -327,7 +399,7 @@ with tab_cmp:
               "after": "After the window"}  # fmt: skip
     wsel = st.segmented_control("Window", list(wnames), default="all", key="cmp_window",
                                 format_func=wnames.get, label_visibility="collapsed") or "all"  # fmt: skip
-    rows = derive.comparison_rows(results, chosen, wsel)
+    rows, rows_text = comparison_of(split, sid, tuple(chosen), wsel, rstamp)
     n_seeds = int(results["n"].max())
     wtxt = f"simulated days {window[0]} to {window[1]}" if window else "no window in this scenario"
     st.markdown(
@@ -338,7 +410,7 @@ with tab_cmp:
         unsafe_allow_html=True,
     )
     st.dataframe(
-        derive.comparison_text(rows, labels), row_height=32,
+        rows_text, row_height=32,
         height=32 * rows["label"].nunique() + 40,
     )  # fmt: skip
     st.markdown(
@@ -350,10 +422,9 @@ with tab_cmp:
                        f"comparison_{sid}_{wsel}.csv", "text/csv", on_click="ignore")  # fmt: skip
 
 with tab_bw:
-    levels = derive.bullwhip_levels(results, chosen)
+    levels, bw_fig = bullwhip_of(split, sid, tuple(chosen), rstamp)
     a, b = st.columns([1.15, 1])
-    a.plotly_chart(F.bullwhip_chart(levels, chosen), key="bullwhip", config=T.PLOT_CONFIG,
-                   theme=None)  # fmt: skip
+    a.plotly_chart(bw_fig, key="bullwhip", config=T.PLOT_CONFIG, theme=None)
     ratio = pd.DataFrame(
         {labels[p]: [f"{levels.loc[p, m]:.2f} ± {levels.loc[p, m + '_std']:.2f}"
                      for m, _ in derive.BULLWHIP_RATIOS] for p in chosen},

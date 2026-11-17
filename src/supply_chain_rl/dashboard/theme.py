@@ -55,6 +55,7 @@ STATUS_LABELS = {
 }
 
 SHOCK_FILL = "rgba(31, 41, 51, 0.09)"
+SHOCK_FILL_IDLE = "rgba(31, 41, 51, 0.055)"  # the same window while the chosen day is outside it
 SHOCK_LINE = "rgba(31, 41, 51, 0.35)"
 FONT = "Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif"
 
@@ -88,7 +89,8 @@ def base_layout(fig: Any, height: int, title: str = "") -> Any:
         font={"family": FONT, "size": 11, "color": INK},
         paper_bgcolor=PANEL,
         plot_bgcolor=PANEL,
-        hoverlabel={"font": {"family": FONT, "size": 11}, "bgcolor": "#FFFFFF"},
+        hoverlabel={"font": {"family": FONT, "size": 11, "color": INK}, "bgcolor": "#FFFFFF",
+                    "bordercolor": "#C9D0D8"},
         legend={"orientation": "h", "x": 0, "xanchor": "left", "y": 1.03, "yanchor": "bottom",
                 "font": {"size": 10, "color": MUTED}, "bgcolor": "rgba(0,0,0,0)"},
         bargap=0.15,
@@ -99,19 +101,26 @@ def base_layout(fig: Any, height: int, title: str = "") -> Any:
             "tickfont": {"size": 10, "color": MUTED}}  # fmt: skip
     fig.update_xaxes(**axis)
     fig.update_yaxes(**axis)
+    fig.update_xaxes(unifiedhovertitle={"text": "<b>Simulated day %{x}</b>"})
     return fig
 
 
-def add_shock_band(fig: Any, window: tuple[int, int] | None, active: bool, label: str) -> Any:
+def add_shock_band(
+    fig: Any, window: tuple[int, int] | None, active: bool, label: str, day: int | None = None
+) -> Any:
     """Shade the shock window: the same band and label on every chart.
 
     For the control the same days are shaded more lightly and labelled as the reference window.
+    While the chosen ``day`` is outside a shock window the band is a little lighter, so the
+    window stands out when the replay enters it (D-45); its edges never move.
     """
     if window is None:
         return fig
     a, b = window
+    inside = day is None or a <= day <= b
+    fill = (SHOCK_FILL if inside else SHOCK_FILL_IDLE) if active else "rgba(31, 41, 51, 0.04)"
     fig.add_vrect(
-        x0=a - 0.5, x1=b + 0.5, fillcolor=SHOCK_FILL if active else "rgba(31, 41, 51, 0.04)",
+        x0=a - 0.5, x1=b + 0.5, fillcolor=fill,
         line={"width": 1, "color": SHOCK_LINE, "dash": "dot"} if active else {"width": 0},
         layer="below",
         annotation={"text": label, "font": {"size": 10, "color": MUTED}, "yanchor": "top",
@@ -122,7 +131,21 @@ def add_shock_band(fig: Any, window: tuple[int, int] | None, active: bool, label
 
 
 def add_day_line(fig: Any, day: int) -> Any:
+    """The chosen day: a line with a small day label at its foot (D-45)."""
     fig.add_vline(x=day, line={"color": INK, "width": 1.2})
+    fig.add_annotation(
+        x=day, y=0, yref="paper", yanchor="top", text=f"<b>{day}</b>", showarrow=False,
+        font={"size": 9.5, "color": "#FFFFFF"}, bgcolor=INK, borderpad=2, yshift=-1,
+        name="day-label",
+    )  # fmt: skip
+    return fig
+
+
+def add_transition(fig: Any, ms: int) -> Any:
+    """Move smoothly to a new day (D-45): the chart eases from the old to the new view in
+    ``ms`` milliseconds; the end state is the exact figure. 0 = no movement (set all the same,
+    so the first move of a session costs no more than the others)."""
+    fig.update_layout(transition={"duration": max(int(ms), 0), "easing": "cubic-in-out"})
     return fig
 
 
@@ -176,6 +199,16 @@ section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {{ padding
 .scd-kpi .dot {{ width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; align-self: center; }}
 .scd-kpi .name {{ color: {MUTED}; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }}
 .scd-kpi .val {{ color: {INK}; font-weight: 650; font-variant-numeric: tabular-nums; }}
+.scd-kpi .sr {{ position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap; }}
+.scd-kpi .odo {{ display: inline-flex; height: 1.5em; line-height: 1.5em; vertical-align: top;
+  user-select: none; }}
+.scd-kpi .od {{ display: inline-block; height: 1.5em; overflow: hidden; }}
+.scd-kpi .od > span {{ display: block; line-height: 1.5em; text-align: center;
+  transform: translateY(calc(var(--d) * -10%));
+  animation: scd-roll 0.9s cubic-bezier(.2, .7, .2, 1) calc(var(--i) * 25ms) both; }}
+@keyframes scd-roll {{ from {{ transform: translateY(0); }} }}
+@media (prefers-reduced-motion: reduce) {{ .scd-kpi .od > span {{ animation: none; }} }}
 .scd-kpi .sd {{ color: {FAINT}; font-size: 11px; font-variant-numeric: tabular-nums; }}
 .scd-kpi .delta {{ font-size: 11px; font-weight: 600; min-width: 82px; text-align: right;
   font-variant-numeric: tabular-nums; }}
@@ -193,6 +226,8 @@ section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {{ padding
 .scd-legend .sw {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%;
   margin: 0 4px 0 9px; vertical-align: -1px; border: 1px solid rgba(0,0,0,.2); }}
 .scd-legend .sw.sq {{ border-radius: 2px; }}
+.scd-legend .scd-hint {{ margin-left: 8px; cursor: help; color: {MUTED}; }}
+iframe[title*="network3d"] {{ display: block; }}
 .stApp p.scd-note {{ font-size: 12px !important; color: {MUTED}; line-height: 1.5;
   margin: 0 !important; }}
 .stApp p.scd-note code {{ font-size: 11.5px; }}

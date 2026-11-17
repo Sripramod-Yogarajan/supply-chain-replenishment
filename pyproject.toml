@@ -16,6 +16,10 @@ dev = ["pytest", "ruff", "mypy", "types-PyYAML", "pandas-stubs", "types-networkx
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# the 3D network component's page and its saved copy of three.js (D-43)
+"supply_chain_rl.dashboard" = ["network3d/*.html", "network3d/*.js", "network3d/vendor/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
