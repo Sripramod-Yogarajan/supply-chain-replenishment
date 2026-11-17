@@ -45,3 +45,5 @@ Planned entries for later phases (from the manual, not yet decided): none at pre
 | Id | Phase | Statement | Rationale / evidence | Status |
 | --- | --- | --- | --- | --- |
 | A? | ? | What is assumed. | Why, and how it will be checked. | open |
+| A32 | 6 | The observation carries one set of edge features, today's; the encoder uses them for all 7 daily graphs of the window. In runs without an announced shock they are the same every day, so nothing is lost. | Manual 7.5 observation (`edge_attr` of shape (E, 4)). `test_A32_graph_input_is_the_observation_with_todays_edge_features`. | open |
+| A33 | 6 | Self-loops are added to every node in the attention layers, with edge features equal to the mean of the node's incoming edges' features (PyTorch Geometric's `fill_value="mean"`), so a node also attends to itself. | Usual GAT practice; the manual does not say. `test_A33_self_loop_edge_features_are_the_mean_of_incoming_edges`. | open |

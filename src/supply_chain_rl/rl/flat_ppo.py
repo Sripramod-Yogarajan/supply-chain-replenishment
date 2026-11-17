@@ -51,6 +51,7 @@ class PPOSettings:
     start_stock_warehouse: tuple[float, float]
     device: str
     torch_threads: int
+    target_kl: float | None = None  # D-54: stop an update's passes once approx KL > 1.5 x this
 
     @classmethod
     def from_config(
@@ -82,6 +83,7 @@ class PPOSettings:
             "start_stock_warehouse": (float(stock["warehouse"][0]), float(stock["warehouse"][1])),
             "device": str(rl["device"]),
             "torch_threads": int(rl["torch_threads"]),
+            "target_kl": None if rl.get("target_kl") is None else float(rl["target_kl"]),
         }
         known = {f.name for f in fields(cls)}
         for k, v in (overrides or {}).items():
@@ -93,6 +95,8 @@ class PPOSettings:
             raise ValueError("rl.init_mean_fraction must be in (0, 1)")
         if s.init_std <= 0:
             raise ValueError("rl.init_std must be positive")
+        if s.target_kl is not None and s.target_kl <= 0:
+            raise ValueError("rl.target_kl must be positive or null")
         if s.minibatch_size > s.steps_per_update:
             raise ValueError("rl.minibatch_size must not exceed rl.steps_per_update")
         return s
@@ -144,8 +148,20 @@ class ActorCritic(nn.Module):
         mu = self.mean(obs)
         return torch.distributions.Normal(mu, self.log_std.exp().expand_as(mu))
 
+    def mean_value(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Actor mean and critic value (separate networks; the graph model shares one pass)."""
+        return self.mean(obs), self.value(obs)
+
     def actor_parameters(self) -> list[nn.Parameter]:
         return [*self.actor.parameters(), self.log_std]
+
+    def grad_groups(self) -> list[list[nn.Parameter]]:
+        """Parameter groups whose gradient norm is limited separately (actor, critic)."""
+        return [self.actor_parameters(), list(self.critic.parameters())]
+
+    def encode(self, obs: Mapping[str, np.ndarray]) -> np.ndarray:
+        """The model's input array for one observation: the flat state (A29)."""
+        return flatten(obs)
 
 
 def gae(
@@ -187,44 +203,63 @@ class Batch:
 
 
 def ppo_update(
-    model: ActorCritic,
+    model: Any,
     opt: torch.optim.Optimizer,
     batch: Batch,
     s: PPOSettings,
     gen: torch.Generator,
 ) -> dict[str, float]:
-    """Clipped-surrogate PPO passes over one batch; returns diagnostics."""
+    """Clipped-surrogate PPO passes over one batch; returns diagnostics.
+
+    D-54: with ``s.target_kl`` set, the remaining passes of this update are skipped as soon as a
+    minibatch's approximate KL to the rollout policy exceeds ``1.5 x target_kl`` (that minibatch
+    is not applied). With ``target_kl`` None the update is exactly the Phase 5 one.
+    """
     n = batch.obs.shape[0]
     adv = (batch.advantages - batch.advantages.mean()) / (batch.advantages.std() + 1e-8)
     stats: dict[str, list[float]] = {
         k: [] for k in ("policy_loss", "value_loss", "entropy", "approx_kl", "clip_frac")
     }
-    actor_params, critic_params = model.actor_parameters(), list(model.critic.parameters())
+    groups = model.grad_groups()
+    limit = None if s.target_kl is None else 1.5 * s.target_kl
+    stopped, minibatches = False, 0
     for _ in range(s.epochs_per_update):
+        if stopped:
+            break
         perm = torch.randperm(n, generator=gen)
         for start in range(0, n, s.minibatch_size):
             idx = perm[start : start + s.minibatch_size]
-            dist = model.dist(batch.obs[idx])
+            mu, v_pred = model.mean_value(batch.obs[idx])
+            dist = torch.distributions.Normal(mu, model.log_std.exp().expand_as(mu))
             logp = dist.log_prob(batch.actions[idx]).sum(-1)  # type: ignore[no-untyped-call]
             log_ratio = logp - batch.logp[idx]
             ratio = log_ratio.exp()
             a = adv[idx]
             policy_loss = -torch.min(ratio * a, ratio.clamp(1 - s.clip, 1 + s.clip) * a).mean()
-            value_loss = (model.value(batch.obs[idx]) - batch.returns[idx]).pow(2).mean()
+            value_loss = (v_pred - batch.returns[idx]).pow(2).mean()
             entropy = dist.entropy().sum(-1).mean()  # type: ignore[no-untyped-call]
             loss = policy_loss + s.value_coef * value_loss - s.entropy_coef * entropy
+            if limit is not None:
+                with torch.no_grad():
+                    kl_now = float(((ratio - 1) - log_ratio).mean())
+                if kl_now > limit:
+                    stopped = True
+                    break
             opt.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm_(actor_params, s.max_grad_norm)
-            nn.utils.clip_grad_norm_(critic_params, s.max_grad_norm)
+            for g in groups:
+                nn.utils.clip_grad_norm_(g, s.max_grad_norm)
             opt.step()
+            minibatches += 1
             with torch.no_grad():
                 stats["policy_loss"].append(float(policy_loss))
                 stats["value_loss"].append(float(value_loss))
                 stats["entropy"].append(float(entropy))
                 stats["approx_kl"].append(float(((ratio - 1) - log_ratio).mean()))
                 stats["clip_frac"].append(float(((ratio - 1).abs() > s.clip).float().mean()))
-    out = {k: float(np.mean(v)) for k, v in stats.items()}
+    out = {k: float(np.mean(v)) if v else math.nan for k, v in stats.items()}
+    out["minibatches"] = float(minibatches)
+    out["kl_stopped"] = float(stopped)
     var_ret = float(batch.returns.var())
     resid = float((batch.returns - batch.values).var())
     out["explained_variance"] = 1.0 - resid / var_ret if var_ret > 0 else math.nan

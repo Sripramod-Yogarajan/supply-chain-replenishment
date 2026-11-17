@@ -15,25 +15,35 @@ from typing import Any
 import numpy as np
 import torch
 
-from supply_chain_rl.rl.flat_ppo import ActorCritic, flatten
+from supply_chain_rl.rl.encoder import GraphActorCritic, graph_from_spec
+from supply_chain_rl.rl.flat_ppo import ActorCritic
 from supply_chain_rl.sim.state import Notebook, Topology
 
+Model = ActorCritic | GraphActorCritic
 
-def model_record(
-    model: ActorCritic, ordering: Sequence[str], hidden: Sequence[int]
-) -> dict[str, Any]:
-    """What a checkpoint needs to rebuild the network."""
-    return {
+
+def model_record(model: Model, ordering: Sequence[str], hidden: Sequence[int]) -> dict[str, Any]:
+    """What a checkpoint needs to rebuild the network (``kind`` flat or graph; D-55)."""
+    rec: dict[str, Any] = {
+        "kind": "graph" if isinstance(model, GraphActorCritic) else "flat",
         "model_state": model.state_dict(),
         "obs_dim": model.obs_dim,
         "n_actions": model.n_actions,
         "hidden": list(hidden),
         "ordering": list(ordering),
     }
+    if isinstance(model, GraphActorCritic):
+        rec["spec"] = model.spec
+    return rec
 
 
-def model_from_record(rec: Mapping[str, Any]) -> ActorCritic:
-    model = ActorCritic(int(rec["obs_dim"]), int(rec["n_actions"]), rec["hidden"], 1 / 3, 0.1)
+def model_from_record(rec: Mapping[str, Any]) -> Model:
+    """Rebuild a model; Phase 5 checkpoints have no ``kind`` and are flat."""
+    model: Model
+    if rec.get("kind", "flat") == "graph":
+        model = graph_from_spec(rec["spec"])
+    else:
+        model = ActorCritic(int(rec["obs_dim"]), int(rec["n_actions"]), rec["hidden"], 1 / 3, 0.1)
     model.load_state_dict(rec["model_state"])
     model.eval()
     return model
@@ -43,7 +53,7 @@ def model_from_record(rec: Mapping[str, Any]) -> ActorCritic:
 class PPOPolicy:
     """Frozen actor; ``act`` returns the mean fraction of the cap for each ordering node."""
 
-    model: ActorCritic
+    model: Model
     ordering: tuple[str, ...]
     name: str = "ppo"
     uses_observation: bool = True
@@ -51,7 +61,7 @@ class PPOPolicy:
 
     def act(self, obs: Mapping[str, np.ndarray]) -> np.ndarray:
         with torch.no_grad():
-            x = torch.as_tensor(flatten(obs)).unsqueeze(0)
+            x = torch.as_tensor(self.model.encode(obs)).unsqueeze(0)
             out: np.ndarray = self.model.mean(x).squeeze(0).numpy().astype(np.float64)
         return out
 

@@ -51,9 +51,11 @@ def _setup(raw_config: dict[str, Any]) -> tuple[Config, SimData]:
     return cfg, synthetic_data(cfg, demand, AVG, UNIFORM)
 
 
-def _trainer(cfg: Config, data: SimData, out: Path, seed: int = 1001, **over: Any) -> Trainer:
+def _trainer(
+    cfg: Config, data: SimData, out: Path, seed: int = 1001, variant: str | None = None, **over: Any
+) -> Trainer:
     s = PPOSettings.from_config(cfg.section("rl"), {**TINY, **over})
-    return Trainer(cfg, data, "prototype", seed, out, s, log=lambda _m: None)
+    return Trainer(cfg, data, "prototype", seed, out, s, log=lambda _m: None, variant=variant)
 
 
 def _weights(m: torch.nn.Module) -> dict[str, torch.Tensor]:

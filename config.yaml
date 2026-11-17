@@ -54,10 +54,28 @@ scenarios:                 # Phase 3 evaluation scenarios on the test days (manu
     price_discount: {type: price_discount, target: [St1], d: 0.2, u: 0.2}
     price_discount_high: {type: price_discount, target: [St1], d: 0.2, u: 0.5}   # sensitivity: top of the range
 rl:
-  embed_dim: 16            # Phase 6 (graph encoder)
+  embed_dim: 16            # Phase 6 (graph encoder, D-55)
   gat_layers: 2
   lstm_hidden: 16
-  pretrain_encoder: false
+  pretrain_encoder: false  # superseded by the per-variant `pretrain` flag (D-57)
+  graph_head_hidden: [64]  # shared actor head and critic head on the node summaries
+  phase6_target_kl: null   # KL stop tried at 0.015 and not adopted (D-54); Phase 5 updates
+  phase6_dir: checkpoints/phase6   # not committed; back this folder up
+  variants:                # Phase 6 ablations (D-57); graph defaults: lstm true, no dropped features
+    flat: {model: flat}
+    graph_nolstm: {lstm: false}
+    graph_lstm: {}
+    graph_lstm_no_wd_snap: {drop_features: [sin_wd, cos_wd, snap]}
+    graph_lstm_no_event: {drop_features: [event]}
+    graph_lstm_no_price: {drop_features: [price]}
+    graph_lstm_pretrained: {pretrain: true}
+  pretrain:                # encoder pretraining on next-day store demand (D-58)
+    episodes: 400          # base-stock training episodes of 60 decision days (windows)
+    val_episodes: 0        # 0 = the whole validation stretch, evaluation seeds of pretraining below
+    seed_stream: pretrain
+    epochs: 30
+    lr: 0.001
+    minibatch_size: 256
   # PPO (Phase 5; manual 12.1 as amended by D-35; settings of D-48 to D-50)
   discount: 0.99
   gae_lambda: 0.95

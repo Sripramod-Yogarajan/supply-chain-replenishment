@@ -43,13 +43,15 @@ import torch
 from supply_chain_rl.config import Config, load_config
 from supply_chain_rl.eval.runner import network_config, score_policy
 from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH, ROOT
-from supply_chain_rl.rl.flat_ppo import ActorCritic, Batch, PPOSettings, flatten, gae, ppo_update
-from supply_chain_rl.rl.policy import PPOPolicy, model_record
+from supply_chain_rl.rl.encoder import GraphActorCritic
+from supply_chain_rl.rl.flat_ppo import ActorCritic, Batch, PPOSettings, gae, ppo_update
+from supply_chain_rl.rl.policy import Model, PPOPolicy, model_record
 from supply_chain_rl.seeding import make_rng
 from supply_chain_rl.sim.data import SimData, load_sim_data
 from supply_chain_rl.sim.env import SupplyChainEnv
 from supply_chain_rl.sim.features import N_FEATURES
 from supply_chain_rl.sim.rules import round_half_up
+from supply_chain_rl.sim.state import Topology
 
 EVAL_METRICS = ("total_cost", "fill_rate", "bullwhip_chain", "order_change_cost",
                 "stockout_units", "holding_cost")  # fmt: skip
@@ -114,8 +116,10 @@ class Trainer:
         out_dir: Path,
         settings: PPOSettings,
         log: Callable[[str], None] | None = None,
+        variant: str | None = None,
     ) -> None:
         self.cfg, self.data, self.network, self.seed = cfg, data, network, train_seed
+        self.variant = variant
         self.s, self.out_dir = settings, out_dir
         self._log = log or print
         self.device = setup_torch(settings)
@@ -129,11 +133,8 @@ class Trainer:
         self.rounds = settings.steps_per_update // per_round
         self.envs = [SupplyChainEnv(cfg, data, "fraction") for _ in range(settings.n_envs)]
         self.topo = self.envs[0].topo
-        window = int(cfg.section("sim")["history_window"])
-        obs_dim = window * len(self.topo.nodes) * N_FEATURES
         torch.manual_seed(train_seed)
-        self.model = ActorCritic(obs_dim, len(self.topo.ordering), settings.flat_hidden,
-                                 settings.init_mean_fraction, settings.init_std).to(self.device)  # fmt: skip
+        self.model: Model = build_model(cfg, data, settings, variant).to(self.device)
         self.opt = torch.optim.Adam(self.model.parameters(), lr=settings.lr, eps=1e-5)
         self.gen = torch.Generator().manual_seed(train_seed)  # action noise and minibatches
         self.rng_episodes = make_rng(train_seed, "episodes")
@@ -182,15 +183,14 @@ class Trainer:
             for env in self.envs:
                 seed = int(self.rng_episodes.integers(0, 2**31 - 1))
                 o, _ = env.reset(seed=seed, options=self.train_options())
-                obs.append(flatten(o))
+                obs.append(self.model.encode(o))
             for d in range(D):
                 o_t = torch.as_tensor(np.stack(obs), device=dev)
                 with torch.no_grad():
-                    mu = self.model.mean(o_t)
+                    mu, v = self.model.mean_value(o_t)
                     noise = torch.randn(mu.shape, generator=self.gen).to(dev)
                     a = mu + std * noise
                     logp = torch.distributions.Normal(mu, std).log_prob(a).sum(-1)  # type: ignore[no-untyped-call]
-                    v = self.model.value(o_t)
                 a_np = a.cpu().numpy()
                 clipped += int(((a_np < 0) | (a_np > 1)).sum())
                 nxt = []
@@ -198,9 +198,9 @@ class Trainer:
                     ob, rw, te, tr, _ = env.step(np.clip(a_np[i], 0.0, 1.0))
                     rew[r, i, d], term[r, i, d], ends[r, i, d] = rw, te, te or tr
                     if te or tr:  # D-35 (b): the state after the last day, for the bootstrap
-                        nxt.append(flatten(env.peek_observation()))
+                        nxt.append(self.model.encode(env.peek_observation()))
                     else:
-                        nxt.append(flatten(ob))
+                        nxt.append(self.model.encode(ob))
                 if d == D - 1 and not ends[r, :, d].all():
                     raise RuntimeError("training episodes must all end after episode_decision_days")
                 obs_l.append(o_t)
@@ -269,7 +269,8 @@ class Trainer:
     # -------------------------------------------------------------------- checkpoints
 
     def _meta(self) -> dict[str, Any]:
-        return {"network": self.network, "train_seed": self.seed, "settings": self.s.as_dict(),
+        return {"network": self.network, "train_seed": self.seed, "variant": self.variant,
+                "variant_spec": variant_spec(self.cfg, self.variant), "settings": self.s.as_dict(),
                 "config_hash": self.cfg.hash(), "git_commit": git_commit(),
                 "torch": str(torch.__version__), "device": str(self.device)}  # fmt: skip
 
@@ -298,8 +299,9 @@ class Trainer:
 
     def resume(self) -> None:
         rec = torch.load(self.out_dir / "last.pt", map_location=self.device, weights_only=True)
-        if rec["train_seed"] != self.seed or rec["network"] != self.network:
-            raise ValueError("last.pt belongs to another network or training seed")
+        if (rec["train_seed"] != self.seed or rec["network"] != self.network
+                or rec.get("variant") != self.variant):  # fmt: skip
+            raise ValueError("last.pt belongs to another network, variant or training seed")
         if rec["settings"] != self.s.as_dict():
             raise ValueError("PPO settings changed since last.pt was written; start a new run")
         self.model.load_state_dict(rec["model_state"])
@@ -338,7 +340,8 @@ class Trainer:
         s, st = self.s, self.state
         limit = s.max_updates if max_updates is None else max_updates
         if st.update == 0 and not st.curve:
-            self.log(f"start: network {self.network}, seed {self.seed}, device {self.device}, "
+            self.log(f"start: network {self.network}, variant {self.variant or 'phase5 flat'}, "
+                     f"seed {self.seed}, device {self.device}, "
                      f"{self.rounds} x {s.n_envs} episodes of {self.dd} days per update")  # fmt: skip
             row: dict[str, Any] = {"update": 0, "steps": 0}
             self._eval_step(row)
@@ -387,8 +390,48 @@ class Trainer:
         return st
 
 
-def run_dir(cfg: Config, network: str, seed: int) -> Path:
-    return ROOT / str(cfg.section("rl")["checkpoint_dir"]) / f"{network}_s{seed}"
+def variant_spec(cfg: Config, variant: str | None) -> dict[str, Any]:
+    """A Phase 6 variant from ``rl.variants`` (D-57); None is the Phase 5 flat model."""
+    if variant is None:
+        return {"model": "flat"}
+    variants = cfg.section("rl")["variants"]
+    if variant not in variants:
+        raise ValueError(f"unknown variant {variant!r}; expected one of {sorted(variants)}")
+    spec = {"model": "graph", "lstm": True, "drop_features": [], "pretrain": False}
+    spec.update(variants[variant] or {})
+    return spec
+
+
+def phase6_target_kl(cfg: Config) -> float | None:
+    """The KL early stop of D-54, applied identically to every Phase 6 variant (flat included)."""
+    v = cfg.section("rl").get("phase6_target_kl")
+    return None if v is None else float(v)
+
+
+def build_model(cfg: Config, data: SimData, s: PPOSettings, variant: str | None) -> Model:
+    """The untrained network of ``variant`` (torch seed set by the caller)."""
+    spec = variant_spec(cfg, variant)
+    topo = Topology.from_config(cfg)
+    window = int(cfg.section("sim")["history_window"])
+    if spec["model"] == "flat":
+        obs_dim = window * len(topo.nodes) * N_FEATURES
+        return ActorCritic(obs_dim, len(topo.ordering), s.flat_hidden, s.init_mean_fraction,
+                           s.init_std)  # fmt: skip
+    rl = cfg.section("rl")
+    idx = {n: i for i, n in enumerate(topo.nodes)}
+    return GraphActorCritic(
+        window, data.skeleton.edge_index, len(topo.nodes), [idx[n] for n in topo.ordering],
+        list(spec["drop_features"]), int(rl["embed_dim"]), int(rl["gat_layers"]),
+        int(rl["lstm_hidden"]) if spec["lstm"] else None, tuple(rl["graph_head_hidden"]),
+        s.init_mean_fraction, s.init_std,
+    )  # fmt: skip
+
+
+def run_dir(cfg: Config, network: str, seed: int, variant: str | None = None) -> Path:
+    rl = cfg.section("rl")
+    if variant is None:
+        return ROOT / str(rl["checkpoint_dir"]) / f"{network}_s{seed}"
+    return ROOT / str(rl["phase6_dir"]) / f"{variant}_s{seed}"
 
 
 def settings_for(
@@ -409,6 +452,11 @@ def main(argv: list[str] | None = None) -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)  # fmt: skip
     ap.add_argument("--network", choices=("prototype", "smoke"), default="prototype")
     ap.add_argument("--seed", type=int, required=True, help="training seed (rl.training_seeds)")
+    ap.add_argument(
+        "--variant",
+        default=None,
+        help="Phase 6 variant from rl.variants (D-57); omit for the Phase 5 flat run",
+    )
     ap.add_argument("--resume", action="store_true", help="continue from last.pt")
     ap.add_argument("--device", default=None, help="override rl.device (cpu, cuda)")
     ap.add_argument("--max-updates", type=int, default=None, help="stop after this many updates")
@@ -422,12 +470,18 @@ def main(argv: list[str] | None = None) -> None:
     data = load_sim_data(cfg)
     over = {"device": args.device} if args.device else {}
     s = settings_for(base, args.network, over)
-    out = args.out or run_dir(base, args.network, args.seed)
+    if args.variant is not None:  # Phase 6 settings: KL early stop (D-54)
+        s = settings_for(base, args.network, {**over, "target_kl": phase6_target_kl(base)})
+    out = args.out or run_dir(base, args.network, args.seed, args.variant)
     if (out / "last.pt").exists() and not args.resume:
         sys.exit(f"{out / 'last.pt'} exists: use --resume, or move the folder away")
-    tr = Trainer(cfg, data, args.network, args.seed, out, s)
+    tr = Trainer(cfg, data, args.network, args.seed, out, s, variant=args.variant)
     if args.resume:
         tr.resume()
+    elif variant_spec(base, args.variant).get("pretrain"):
+        from supply_chain_rl.rl.pretrain import load_pretrained_encoder
+
+        load_pretrained_encoder(tr.model, base, args.seed, tr.log)
     tr.run(args.max_updates)
 
 

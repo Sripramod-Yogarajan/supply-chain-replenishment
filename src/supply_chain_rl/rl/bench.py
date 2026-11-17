@@ -1,6 +1,10 @@
 """Speed and repeatability of PPO training on CPU and GPU (DECISIONS D-48).
 
-    python -m supply_chain_rl.rl.bench [--updates 20]
+    python -m supply_chain_rl.rl.bench [--updates 20] [--variant graph_lstm] [--devices cpu,cuda]
+
+Without ``--variant`` it is the Phase 5 flat run (``results/phase5/bench.json``); with a Phase 6
+variant (D-57) the KL early stop of D-54 is on and the file is
+``results/phase6/bench_<variant>.json``.
 
 1. Simulator alone: decision steps per second with fixed actions (no network).
 2. The real trainer on each available device for the same short run (same seed, same settings
@@ -28,7 +32,7 @@ import torch
 from supply_chain_rl.config import load_config
 from supply_chain_rl.eval.runner import RESULTS
 from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH
-from supply_chain_rl.rl.train import Trainer, settings_for
+from supply_chain_rl.rl.train import Trainer, phase6_target_kl, settings_for
 from supply_chain_rl.sim.data import load_sim_data
 from supply_chain_rl.sim.env import SupplyChainEnv
 
@@ -56,21 +60,27 @@ def main(argv: list[str] | None = None) -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)  # fmt: skip
     ap.add_argument("--updates", type=int, default=20)
     ap.add_argument("--seed", type=int, default=1001)
+    ap.add_argument("--variant", default=None, help="Phase 6 variant (rl.variants)")
+    ap.add_argument("--devices", default="cpu,cuda")
     args = ap.parse_args(argv)
+    v = args.variant
     cfg = load_config(CONFIG_PATH, DERIVED_PATH)
     data = load_sim_data(cfg)
-    out: dict[str, Any] = {"updates": args.updates, "seed": args.seed, "torch": torch.__version__,
+    extra: dict[str, Any] = {} if v is None else {"target_kl": phase6_target_kl(cfg)}
+    out: dict[str, Any] = {"updates": args.updates, "seed": args.seed, "variant": v,
+                           "torch": torch.__version__,
                            "cuda_available": torch.cuda.is_available()}  # fmt: skip
     out["env_steps_per_s"] = round(env_speed(cfg, data), 0)
     print(f"simulator alone: {out['env_steps_per_s']:.0f} decision steps/s")
-    devices = ["cpu"] + (["cuda"] if torch.cuda.is_available() else [])
+    devices = [d for d in args.devices.split(",") if d == "cpu" or torch.cuda.is_available()]
     if torch.cuda.is_available():
         out["gpu"] = torch.cuda.get_device_name(0)
     trainers: dict[str, Trainer] = {}
     with tempfile.TemporaryDirectory() as tmp:
         for dev in devices:
-            s = settings_for(cfg, "prototype", {"device": dev})
-            tr = Trainer(cfg, data, "prototype", args.seed, Path(tmp) / dev, s, log=lambda _m: None)
+            s = settings_for(cfg, "prototype", {"device": dev, **extra})
+            tr = Trainer(cfg, data, "prototype", args.seed, Path(tmp) / dev, s,
+                         log=lambda _m: None, variant=v)  # fmt: skip
             t0 = time.perf_counter()
             tr.run(args.updates)
             wall = time.perf_counter() - t0
@@ -87,21 +97,18 @@ def main(argv: list[str] | None = None) -> None:
             print(f"{dev}: {out[dev]}")
             trainers[dev] = tr
         # repeatability on the CPU: same seed again
-        s = settings_for(cfg, "prototype", {"device": "cpu"})
-        again = Trainer(
-            cfg, data, "prototype", args.seed, Path(tmp) / "cpu2", s, log=lambda _m: None
-        )
+        s = settings_for(cfg, "prototype", {"device": "cpu", **extra})
+        again = Trainer(cfg, data, "prototype", args.seed, Path(tmp) / "cpu2", s,
+                        log=lambda _m: None, variant=v)  # fmt: skip
         again.run(args.updates)
         out["cpu_repeat_max_weight_diff"] = max_weight_diff(trainers["cpu"].model, again.model)
         # resume: half, stop, new process state from last.pt, the rest
         half = args.updates // 2
-        first = Trainer(
-            cfg, data, "prototype", args.seed, Path(tmp) / "res", s, log=lambda _m: None
-        )
+        first = Trainer(cfg, data, "prototype", args.seed, Path(tmp) / "res", s,
+                        log=lambda _m: None, variant=v)  # fmt: skip
         first.run(half)
-        second = Trainer(
-            cfg, data, "prototype", args.seed, Path(tmp) / "res", s, log=lambda _m: None
-        )
+        second = Trainer(cfg, data, "prototype", args.seed, Path(tmp) / "res", s,
+                         log=lambda _m: None, variant=v)  # fmt: skip
         second.resume()
         second.run(args.updates)
         out["resume_max_weight_diff"] = max_weight_diff(trainers["cpu"].model, second.model)
@@ -112,7 +119,9 @@ def main(argv: list[str] | None = None) -> None:
             out["cpu_vs_gpu_val_cost"] = [out["cpu"]["val_total_cost_last_eval"],
                                           out["cuda"]["val_total_cost_last_eval"]]  # fmt: skip
     print({k: v for k, v in out.items() if k not in devices})
-    path = RESULTS / "phase5" / "bench.json"
+    path = (
+        RESULTS / "phase5" / "bench.json" if v is None else RESULTS / "phase6" / f"bench_{v}.json"
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(out, indent=1), encoding="utf-8")
     print(f"-> {path}")
