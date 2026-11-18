@@ -339,3 +339,70 @@ def test_D71_gate_G4c_outcome_and_inconclusive_clause() -> None:
         r = g4c_outcome(_verdict(True, -300), flags, 1)  # overrides a pass
         assert r["outcome"] == "inconclusive" and "under-trained" in r["wording"]
     assert "A22" in g4c_outcome(_verdict(True, -300), {"flat": 0, "graph_lstm": 0}, 1)["wording"]
+
+
+# ------------------------------------------------------------------------- D-72 (m)
+
+
+def _fake_runs(shift: float) -> pd.DataFrame:
+    """Synthetic metrics: graph_lstm = flat + shift (+ noise), basestock fixed; 20 seeds."""
+    from supply_chain_rl.eval.phase8 import TRAINING_SEEDS
+
+    rng = np.random.default_rng(1)
+    rows = []
+    for s in range(1, 21):
+        base = 1000 + 10 * s
+        rows.append({"policy": "basestock", "seed": s, "total_cost": base})
+        for k in TRAINING_SEEDS:
+            f = base + rng.normal(0, 5) + (k - 2000)
+            rows.append({"policy": f"flat_s{k}", "seed": s, "total_cost": f})
+            rows.append({"policy": f"graph_lstm_s{k}", "seed": s,
+                         "total_cost": f + shift + rng.normal(0, 5)})  # fmt: skip
+    df = pd.DataFrame(rows).assign(scenario="control", fill_rate=0.9, bullwhip_chain=1.0)
+    return df.assign(reward_cost=df["total_cost"])
+
+
+def test_D72_family_statistic_equals_the_G4c_code() -> None:
+    from supply_chain_rl.eval.phase8 import family_compare
+    from supply_chain_rl.rl.g3b import g3b_verdict
+
+    runs = _fake_runs(-40.0)
+    mine = family_compare(runs, "graph_lstm", "flat", "total_cost", "control")
+    ref = g3b_verdict(runs, "graph_lstm", "flat", list(range(2001, 2006)), 4)
+    assert mine["mean_diff"] == pytest.approx(ref["mean"]["mean_diff"])
+    assert (mine["lo"], mine["hi"]) == pytest.approx(
+        (ref["mean"]["ci_low"], ref["mean"]["ci_high"])
+    )
+    for k, v in ref["per_training_seed"].items():
+        assert mine["per_seed"][k]["hi"] == pytest.approx(v["ci_high"])
+    assert mine["seeds_clearly_better"] == ref["seeds_clearly_better"] == 5
+
+
+def test_D71_G4d_reading() -> None:
+    from supply_chain_rl.eval.phase8 import family_compare, g4d_reading
+
+    assert g4d_reading(_fake_runs(-40.0))["reading"] == "confirmed on test"
+    assert g4d_reading(_fake_runs(+40.0))["reading"] == "contradicted"
+    assert g4d_reading(_fake_runs(0.0))["reading"] == "not confirmed"
+    # against a baseline every training seed uses the same baseline run
+    r = family_compare(_fake_runs(0.0), "flat", "basestock", "total_cost", "control")
+    assert r["mean_diff"] == pytest.approx(3.0, abs=2.0)  # flat_s<k> = base + (k - 2000) + noise
+
+
+def test_D72_chain_metrics_from_a_log() -> None:
+    from supply_chain_rl.eval.phase8 import chain_metrics, spearman
+
+    rows = []
+    for t in (1, 2, 3):
+        for n, typ in (("W1", "warehouse"), ("St1", "store"), ("St2", "store"), ("W2", "warehouse"),
+                       ("St3", "store"), ("St4", "store")):  # fmt: skip
+            rows.append({"t": t, "phase": "decision", "node": n, "node_type": typ,
+                         "stock_end": 10, "stockout": 1 if typ == "store" else 0,
+                         "order": t * (2 if typ == "warehouse" else 1), "demand": t})  # fmt: skip
+    m = chain_metrics(pd.DataFrame(rows), 0.05, 1.0)
+    assert m["cost_W1"] == pytest.approx(
+        0.05 * 90 + 6.0
+    )  # 3 nodes x 3 days x 10; 2 stores x 3 days
+    assert m["cost_W2"] == m["cost_W1"]
+    assert m["bullwhip_chain_W1"] == pytest.approx(1.0)  # warehouse order 2t vs demand t + t
+    assert spearman([1, 2, 3], [10, 30, 20]) == pytest.approx(0.5)

@@ -114,8 +114,68 @@ rl:
   torch_threads: 1
   checkpoint_dir: checkpoints/net8/phase5   # unused in Phase 8 (runs use phase6_dir)
   selected_checkpoint: null   # no "ppo" policy on the eight-node network
-  evaluated: {}            # D-72 (l): the frozen list is added after G4c, before the test run
-  allow_test_split: false  # M-33: true only for the single eight-node test run (D-71 G4d)
+  evaluated:               # D-72 (l), D-76: frozen list for the single eight-node test run (SHA-256 checked on load)
+    flat_s2001:
+      checkpoint: checkpoints/net8/flat_s2001/best.pt
+      sha256: f06332ee7fe568a3ef7390f4f7845ce7ddaf8bbb21189c4de077932fc1d971e4
+      label: "flat family, training seed 2001 (no headline seed)"
+    flat_s2002:
+      checkpoint: checkpoints/net8/flat_s2002/best.pt
+      sha256: 476dbc16802877be7c547a344cd9f751d120b12fc60b0bbd787c68cfd599b3f0
+      label: "flat family, training seed 2002 (no headline seed)"
+    flat_s2003:
+      checkpoint: checkpoints/net8/flat_s2003/best.pt
+      sha256: e33d7aeda5f8af51234d1a2e8e2abaa8da5b48ccabdf2364754b50d119047aa1
+      label: "flat family, training seed 2003 (no headline seed)"
+    flat_s2004:
+      checkpoint: checkpoints/net8/flat_s2004/best.pt
+      sha256: 7eb71865296cd4cd99fcb0e4162d55991c651c9fe5296d8bf0a18d26d9895ac6
+      label: "flat family, training seed 2004 (no headline seed)"
+    flat_s2005:
+      checkpoint: checkpoints/net8/flat_s2005/best.pt
+      sha256: 89dd508adda93b78a8085ed4f36cb9a8b03fb0f3c6de93afeb9364ca8f384c10
+      label: "flat family, training seed 2005 (no headline seed)"
+    graph_lstm_s2001:
+      checkpoint: checkpoints/net8/graph_lstm_s2001/best.pt
+      sha256: 4ff5ea65123b9628cdfcad14a4a1f9d25ff108ee50651a687f0682c3dcf6ed92
+      label: "graph_lstm family, training seed 2001 (no headline seed)"
+    graph_lstm_s2002:
+      checkpoint: checkpoints/net8/graph_lstm_s2002/best.pt
+      sha256: 3c154e686703e6800e441491ee71e22a22e83e31824c7f88b0203002f0c535e3
+      label: "graph_lstm family, training seed 2002 (no headline seed)"
+    graph_lstm_s2003:
+      checkpoint: checkpoints/net8/graph_lstm_s2003/best.pt
+      sha256: 356e924db66f2431a19db466f8b1c8f88fd7c9c816f079711743ee19553f28a0
+      label: "graph_lstm family, training seed 2003 (no headline seed)"
+    graph_lstm_s2004:
+      checkpoint: checkpoints/net8/graph_lstm_s2004/best.pt
+      sha256: 04075ea97e9ad446e00ca842292ff140fb55f357d89fddbac356e5b4d1abc0a8
+      label: "graph_lstm family, training seed 2004 (no headline seed)"
+    graph_lstm_s2005:
+      checkpoint: checkpoints/net8/graph_lstm_s2005/best.pt
+      sha256: 0a24cc6f1b9758d04d24688c9c6fe79e24927a489506c995fe8f6cb730479dde
+      label: "graph_lstm family, training seed 2005 (no headline seed)"
+    graph_nolstm_s2001:
+      checkpoint: checkpoints/net8/graph_nolstm_s2001/best.pt
+      sha256: 4fbb82725468eceb358475f1cebc131a2154d9d0c66e1304fd4a40ccb1a57d04
+      label: "graph_nolstm family, training seed 2001 (no headline seed)"
+    graph_nolstm_s2002:
+      checkpoint: checkpoints/net8/graph_nolstm_s2002/best.pt
+      sha256: 8f200eb9e374d17b732334539e9123a54c53473226da36afd45945c5b0a78785
+      label: "graph_nolstm family, training seed 2002 (no headline seed)"
+    graph_nolstm_s2003:
+      checkpoint: checkpoints/net8/graph_nolstm_s2003/best.pt
+      sha256: b68c22b122941f3d5583ed3a19634a625c22ca505a91c6de4d253aa9d6070f51
+      label: "graph_nolstm family, training seed 2003 (no headline seed)"
+    graph_nolstm_s2004:
+      checkpoint: checkpoints/net8/graph_nolstm_s2004/best.pt
+      sha256: 6b610e8941beade4777196317d0653ebefd93affe403adf694eb913bae76236f
+      label: "graph_nolstm family, training seed 2004 (no headline seed)"
+    graph_nolstm_s2005:
+      checkpoint: checkpoints/net8/graph_nolstm_s2005/best.pt
+      sha256: 349fca6c99aea2d1414789a94fe6a0f436ec97e9acb042edc0431c5e2a96ed36
+      label: "graph_nolstm family, training seed 2005 (no headline seed)"
+  allow_test_split: true   # D-76: single eight-node test run (owner, 2026-11-19); test_lock_net8.json refuses a second
   smoke:                   # Phase 5 smoke test (D-26)
     nodes:
       - {id: S1, type: supplier}
