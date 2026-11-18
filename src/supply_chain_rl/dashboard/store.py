@@ -15,6 +15,7 @@ functions in ``st.cache_data``.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -71,13 +72,25 @@ def log_path(paths: Paths, split: str, scenario_id: str, policy: str, seed: int)
     return paths.runs / split / scenario_id / f"{policy}_s{seed}.csv"
 
 
-def policies_available(paths: Paths, split: str, scenario_id: str, seed: int) -> list[str]:
-    """Policies of the registry that have a replay log for this scenario, in registry order.
+def policies_available(
+    paths: Paths, split: str, scenario_id: str, seed: int, extra: Sequence[str] = ()
+) -> list[str]:
+    """Policies that have a replay log for this scenario: the registry (``POLICY_NAMES``) first,
+    then ``extra`` in its order (the frozen learned policies of ``rl.evaluated``, D-61)."""
+    names = list(dict.fromkeys([*POLICY_NAMES, *extra]))
+    return [p for p in names if log_path(paths, split, scenario_id, p, seed).is_file()]
 
-    The list comes from ``policies.registry.POLICY_NAMES``, so a policy added to the registry
-    later (``ppo``) appears here as soon as its logs exist.
-    """
-    return [p for p in POLICY_NAMES if log_path(paths, split, scenario_id, p, seed).is_file()]
+
+def attention_path(paths: Paths, split: str, scenario_id: str, policy: str, seed: int) -> Path:
+    p = log_path(paths, split, scenario_id, policy, seed)
+    return p.with_name(p.stem + "_attention.csv")
+
+
+def load_attention(
+    paths: Paths, split: str, scenario_id: str, policy: str, seed: int
+) -> pd.DataFrame:
+    """Today's attention weights per decision day, layer and edge (``eval.runner``, D-64)."""
+    return pd.read_csv(attention_path(paths, split, scenario_id, policy, seed))
 
 
 def load_log(paths: Paths, split: str, scenario_id: str, policy: str, seed: int) -> pd.DataFrame:

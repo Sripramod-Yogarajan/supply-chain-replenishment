@@ -24,21 +24,30 @@ POLICY_LABELS = {
     "warmup": "Warm-up rule (naive)",
     "basestock": "Base-stock",
     "movavg": "Moving average",
-    "ppo": "PPO agent",
+    "ppo": "PPO agent (flat, Phase 5)",
+    "graph_lstm": "Graph + LSTM (headline)",
+    "graph_nolstm": "Graph, no LSTM",
+    "ppo_shock": "PPO shock-trained (flat)",
 }
 POLICY_SHORT = {
     "warmup": "Warm-up",
     "basestock": "Base-stock",
     "movavg": "Moving avg",
     "ppo": "PPO",
+    "graph_lstm": "Graph+LSTM",
+    "graph_nolstm": "Graph",
+    "ppo_shock": "PPO shock",
 }
 _POLICY_COLOURS = {
     "basestock": "#0072B2",  # blue
     "movavg": "#E69F00",  # orange
     "warmup": "#6B6B6B",  # grey: the naive reference
-    "ppo": "#CC79A7",  # reddish purple, reserved for the learned policy
+    "ppo": "#CC79A7",  # reddish purple: the flat Phase 5 model
+    "graph_lstm": "#009E73",  # bluish green: the Phase 7 headline (D-61)
+    "graph_nolstm": "#56B4E9",  # sky blue
+    "ppo_shock": "#D55E00",  # vermilion
 }
-_SPARE = ("#009E73", "#56B4E9", "#D55E00", "#000000")  # for registry names not listed above
+_SPARE = ("#000000", "#8B97A3", "#F0E442", "#44515E")  # supplementary rows (D-61)
 
 STATUS_COLOURS = {
     "adequate": "#C7D5E0",  # pale blue-grey

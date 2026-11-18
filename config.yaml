@@ -205,7 +205,7 @@ rl:
       checkpoint: checkpoints/g3b/graph_lstm_s1008/best.pt
       sha256: 71b00d8bdd2a9acd9f32d0638cb8c141e3599a7e1f74fb81de7618a91bbd2bb6
       label: "supplementary"
-  allow_test_split: false  # the learned policy sees the test days once, after G3 (M-33, D-41)
+  allow_test_split: true   # D-61: single learned test run after G3b (owner, 2026-11-18); test_lock.json refuses a second
   smoke:                   # Phase 5 smoke test (D-26)
     nodes:
       - {id: S1, type: supplier}
@@ -229,3 +229,6 @@ dashboard:                 # Phase 4 simulation dashboard (DECISIONS D-33, D-39,
   # Custom shocks are demonstration only (D-41). A learned policy is added to this list only after
   # its single official evaluation on the test days.
   custom_policies: [warmup, basestock, movavg]
+  # Phase 7 (D-64): graph policies whose attention weights are written beside their logs during
+  # the single test run (the attention panel reads them; no learned policy runs on test days again)
+  attention_policies: [graph_lstm, graph_nolstm]

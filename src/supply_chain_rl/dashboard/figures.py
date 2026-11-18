@@ -545,3 +545,61 @@ def map_legend_html(ctx: Context) -> str:
         + f"critical below {wc:g}, low below {wl:g}. A warehouse that is critical on most days "
         + "is the tuned design of the baselines (they keep it lean), not a fault.</div>"
     )  # fmt: skip
+
+
+# ---------------------------------------------------------------------------- attention (Phase 7)
+
+_ATT_LINES = (("solid", T.INK), ("dash", "#44515E"), ("dot", "#66727F"), ("dashdot", "#9AA5B1"))
+
+
+def attention_matrix(att: pd.DataFrame, day: int, layer: int, nodes: Sequence[str]) -> pd.DataFrame:
+    """Weights of one decision day and layer as a target x source matrix (NaN: no edge)."""
+    a = att[(att["t"] == day) & (att["layer"] == layer)]
+    m = a.pivot_table(index="dst", columns="src", values="weight", aggfunc="first")
+    return m.reindex(index=list(nodes), columns=list(nodes))
+
+
+def attention_heatmap(att: pd.DataFrame, day: int, layer: int, nodes: Sequence[str],
+                      height: int = 300) -> Any:  # fmt: skip
+    """One sequential hue (light -> dark blue): how much each node (row) listens to each
+    neighbour or itself (column) today. Each row sums to 1; empty cells have no edge."""
+    m = attention_matrix(att, day, layer, nodes)
+    z = m.to_numpy(dtype=float)
+    text = [["" if np.isnan(v) else f"{v:.2f}" for v in row] for row in z]
+    fig = go.Figure(go.Heatmap(
+        z=z, x=list(m.columns), y=list(m.index), text=text, texttemplate="%{text}",
+        textfont={"size": 12}, zmin=0, zmax=1, xgap=2, ygap=2,
+        colorscale=[[0, "#EAF2F8"], [1, "#0B5C8A"]],
+        colorbar={"title": {"text": "weight", "side": "right"}, "thickness": 10, "len": 0.8},
+        hovertemplate="%{y} listens to %{x}: %{z:.3f}<extra></extra>",
+    ))  # fmt: skip
+    T.base_layout(fig, height, f"Attention on day {day}, layer {layer} · row = receiving node")
+    fig.update_layout(hovermode="closest", plot_bgcolor=T.PANEL)
+    fig.update_xaxes(title_text="Sending node (column)", showgrid=False, side="bottom")
+    fig.update_yaxes(title_text="Receiving node", showgrid=False, autorange="reversed")
+    return fig
+
+
+def attention_lines(att: pd.DataFrame, target: str, layer: int, day: int,
+                    window: tuple[int, int] | None, height: int = 300) -> Any:  # fmt: skip
+    """Weights into ``target`` over the run, one line per sending node (dash + direct label)."""
+    a = att[(att["dst"] == target) & (att["layer"] == layer)]
+    fig = go.Figure()
+    for i, (src, g) in enumerate(a.groupby("src", sort=True)):
+        dash, colour = _ATT_LINES[i % len(_ATT_LINES)]
+        name = "itself" if src == target else f"from {src}"
+        fig.add_trace(go.Scatter(
+            x=g["t"], y=g["weight"], mode="lines", name=name,
+            line={"width": 2, "dash": dash, "color": colour},
+            hovertemplate=f"{name}: %{{y:.3f}}<extra></extra>",
+        ))  # fmt: skip
+        last = g.iloc[-1]
+        fig.add_annotation(x=last["t"], y=last["weight"], text=name, showarrow=False,
+                           xanchor="left", xshift=4, font={"size": 10, "color": T.MUTED})  # fmt: skip
+    T.add_shock_band(fig, window, True, "shock window", day)
+    fig.add_vline(x=day, line={"color": T.FAINT, "width": 1})
+    T.base_layout(fig, height, f"Attention into {target}, layer {layer} · each day sums to 1")
+    fig.update_layout(margin={"l": 52, "r": 70, "t": 50, "b": 34})
+    fig.update_yaxes(title_text="Weight", range=[0, 1])
+    fig.update_xaxes(title_text="Simulated day")
+    return fig

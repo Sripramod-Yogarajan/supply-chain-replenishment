@@ -58,11 +58,24 @@ class PPOPolicy:
     name: str = "ppo"
     uses_observation: bool = True
     meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 7: a graph model can record today's attention weights per layer on every act() call
+    # (one entry per decision day, each a list of (E + N,) arrays); the actions are unchanged.
+    record_attention: bool = False
+    attention_log: list[list[np.ndarray]] = field(default_factory=list)
+
+    @property
+    def has_attention(self) -> bool:
+        return isinstance(self.model, GraphActorCritic)
 
     def act(self, obs: Mapping[str, np.ndarray]) -> np.ndarray:
         with torch.no_grad():
             x = torch.as_tensor(self.model.encode(obs)).unsqueeze(0)
-            out: np.ndarray = self.model.mean(x).squeeze(0).numpy().astype(np.float64)
+            if self.record_attention and isinstance(self.model, GraphActorCritic):
+                mu, attn = self.model.mean_attention(x)
+                self.attention_log.append([a[0, -1].numpy().copy() for a in attn])
+            else:
+                mu = self.model.mean(x)
+            out: np.ndarray = mu.squeeze(0).numpy().astype(np.float64)
         return out
 
     def orders(self, topo: Topology, nb: Notebook) -> dict[str, float]:

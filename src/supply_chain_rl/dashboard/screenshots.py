@@ -44,10 +44,18 @@ CURATED = {
     "dashboard_tab_comparison.png": "07_comparison_table.png",
     "dashboard_tab_bullwhip.png": "08_bullwhip_chart.png",
 }
+# Phase 7: the learned policies after their single test run (D-61, D-64)
+CURATED_P7 = {
+    "dashboard_p7_combined.png": "09_p7_combined_graph_lstm_ppo.png",
+    "dashboard_p7_3d_combined.png": "10_p7_3d_combined_graph_lstm.png",
+    "dashboard_p7_tab_comparison.png": "11_p7_comparison_table.png",
+    "dashboard_p7_tab_attention.png": "12_p7_attention_panel.png",
+    "dashboard_p7_tab_bullwhip.png": "13_p7_bullwhip_chart.png",
+}
 SCENE_FRAMES = 'iframe[title*="network3d"]'
 
 VIEWPORT = {"width": 1366, "height": 768}
-TABS = ("Day table", "Comparison", "Bullwhip", "Event log", "Custom shock", "Export")
+TABS = ("Day table", "Comparison", "Bullwhip", "Attention", "Event log", "Custom shock", "Export")
 FIRST_SCREEN = ".scd-kpis, .js-plotly-plot"  # everything that must be visible without scrolling
 
 
@@ -232,6 +240,49 @@ def capture(url: str, out_dir: Path, scenarios: list[tuple[str, int]]) -> dict[s
     return report
 
 
+def _tab_shot(page: Any, tab: str, path: Path) -> None:
+    page.get_by_role("tab", name=tab).click()
+    page.wait_for_timeout(1200)
+    page.evaluate(
+        "() => document.querySelector('[data-testid=\"stTabs\"]').scrollIntoView({block: 'start'})"
+    )
+    page.wait_for_timeout(500)
+    page.screenshot(path=str(path))
+
+
+def capture_phase7(url: str, out_dir: Path, day: int = 1755) -> list[str]:
+    """Phase 7: the headline ``graph_lstm`` beside ``ppo`` and base-stock (combined shock), the
+    comparison and bullwhip tabs, and the attention panel (demand spike)."""
+    from playwright.sync_api import sync_playwright
+
+    files = []
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        page = browser.new_page(viewport=VIEWPORT, device_scale_factor=1)  # type: ignore[arg-type]
+        q = f"{url}/?scenario=combined&day={day}&with=graph_lstm&more=ppo"
+        page.goto(q)
+        _wait_ready(page, 5)
+        page.screenshot(path=str(out_dir / "dashboard_p7_combined.png"))
+        files.append("dashboard_p7_combined.png")
+        page.goto(f"{url}/?scenario=combined&day={day}&with=graph_lstm&view=3d")
+        _wait_ready(page, 2, scenes=2)
+        page.screenshot(path=str(out_dir / "dashboard_p7_3d_combined.png"))
+        files.append("dashboard_p7_3d_combined.png")
+        page.set_viewport_size({"width": 1366, "height": 900})
+        page.goto(q)
+        _wait_ready(page, 5)
+        for tab in ("Comparison", "Bullwhip"):
+            name = f"dashboard_p7_tab_{tab.lower()}.png"
+            _tab_shot(page, tab, out_dir / name)
+            files.append(name)
+        page.goto(f"{url}/?scenario=demand_spike&day={day}&with=graph_lstm")
+        _wait_ready(page)
+        _tab_shot(page, "Attention", out_dir / "dashboard_p7_tab_attention.png")
+        files.append("dashboard_p7_tab_attention.png")
+        browser.close()
+    return files
+
+
 def four_policies(url: str, sid: str, day: int) -> dict[str, Any]:
     """Layout and 3D step timing with four policies (placeholder ``ppo``); no image is kept."""
     from playwright.sync_api import sync_playwright
@@ -328,6 +379,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--out-dir", type=Path, default=FIGURES)
     ap.add_argument("--docs-dir", type=Path, default=DOCS, help="tracked copies (D-46)")
     ap.add_argument("--no-four", action="store_true", help="skip the four-policy check")
+    ap.add_argument(
+        "--phase7",
+        action="store_true",
+        help="only the Phase 7 images (learned policies, attention panel)",
+    )
     args = ap.parse_args(argv)
 
     from supply_chain_rl.config import load_config
@@ -335,6 +391,21 @@ def main(argv: list[str] | None = None) -> None:
 
     cfg = load_config(CONFIG_PATH, DERIVED_PATH)
     sids = ["control", *(cfg.raw.get("scenarios", {}).get("shocks") or {})]
+    if args.phase7:
+        proc = None if args.url else _serve(args.port)
+        try:
+            files = capture_phase7((args.url or f"http://localhost:{args.port}").rstrip("/"),
+                                   args.out_dir)  # fmt: skip
+        finally:
+            if proc is not None:
+                proc.terminate()
+        args.docs_dir.mkdir(parents=True, exist_ok=True)
+        for src, dst in CURATED_P7.items():
+            shutil.copy2(args.out_dir / src, args.docs_dir / dst)
+        for name in files:
+            print(f"saved {args.out_dir / name}")
+        print(f"copied {len(CURATED_P7)} images to {args.docs_dir}")
+        return
     proc = None if args.url else _serve(args.port)
     try:
         url = args.url or f"http://localhost:{args.port}"

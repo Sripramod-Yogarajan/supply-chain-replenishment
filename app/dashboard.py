@@ -83,6 +83,11 @@ def events_of(split: str, sid: str, policy: str, seed: int, stamp: float) -> pd.
 
 
 @st.cache_data(show_spinner=False)
+def attention_of(split: str, sid: str, policy: str, seed: int, stamp: float) -> pd.DataFrame:
+    return store.load_attention(PATHS, split, sid, policy, seed)
+
+
+@st.cache_data(show_spinner=False)
 def runs_csv(split: str, sid: str, stamp: float) -> bytes:
     return store.load_runs(PATHS, split, sid).to_csv(index=False).encode()
 
@@ -131,6 +136,13 @@ dash = cfg.raw.get("dashboard") or {}
 SEED = int(dash.get("replay_seed", 1))
 REFERENCE = str(dash.get("reference_policy", "basestock"))
 SPEEDS = [int(x) for x in dash.get("play_speeds", [1, 2, 5])]
+EVALUATED = list(cfg.section("rl").get("evaluated") or {})  # frozen learned policies (D-61)
+HEADLINE_NOTE = (
+    "<b>Headline: Graph + LSTM</b> (<code>graph_lstm</code>), fixed on validation evidence by Gate "
+    "G3b (D-61). Gate G3 failed (D-56); G3b is a post-hoc hypothesis tested on fresh training "
+    "seeds. The architecture beat the flat model on fresh seeds; this does not show that graph "
+    "structure is the reason (A22). <code>ppo</code> is the unchanged flat Phase 5 model."
+)
 ss = st.session_state
 qp = st.query_params
 
@@ -172,7 +184,7 @@ with st.sidebar:
                    format_func=lambda s: derive.scenario_label(scns[s]))  # fmt: skip
     scn = scns[sid]
 
-    available = store.policies_available(PATHS, split, sid, SEED)
+    available = store.policies_available(PATHS, split, sid, SEED, EVALUATED)
     if not available:
         st.error(f"No replay logs for scenario {sid} (seed {SEED}).")
         st.stop()
@@ -358,9 +370,11 @@ right.plotly_chart(
 # ---------------------------------------------------------------------------------- tabs
 
 labels = {p: T.policy_label(p) for p in chosen}
-tab_day, tab_cmp, tab_bw, tab_ev, tab_custom, tab_exp = st.tabs(
-    ["Day table", "Comparison", "Bullwhip", "Event log", "Custom shock", "Export"]
+tab_day, tab_cmp, tab_bw, tab_att, tab_ev, tab_custom, tab_exp = st.tabs(
+    ["Day table", "Comparison", "Bullwhip", "Attention", "Event log", "Custom shock", "Export"]
 )
+if any(p in EVALUATED for p in chosen):
+    st.markdown(f'<p class="scd-note">{HEADLINE_NOTE}</p>', unsafe_allow_html=True)
 
 with tab_day:
     a, _ = st.columns([1.2, 4])
@@ -441,6 +455,42 @@ with tab_bw:
         "ratio 1.0 at about three times the cost). Not shown per window (D-32).</p>",
         unsafe_allow_html=True,
     )
+
+with tab_att:
+    att_pols = [p for p in available
+                if store.attention_path(PATHS, split, sid, p, SEED).is_file()]  # fmt: skip
+    if not att_pols:
+        st.info("No attention weights for this scenario. They are written for the graph policies "
+                "of `dashboard.attention_policies` by the evaluation run (D-64).")  # fmt: skip
+    else:
+        a, b, cc = st.columns([1.4, 1, 1.2], vertical_alignment="bottom")
+        default = [p for p in chosen if p in att_pols] or att_pols
+        ap = a.selectbox("Graph policy", att_pols, index=att_pols.index(default[0]),
+                         format_func=T.policy_label, key="att_policy")  # fmt: skip
+        att = attention_of(split, sid, ap, SEED,
+                           _stamp(store.attention_path(PATHS, split, sid, ap, SEED)))  # fmt: skip
+        layers = sorted(int(x) for x in att["layer"].unique())
+        layer = b.segmented_control("Layer", layers, default=layers[-1], key="att_layer",
+                                    format_func=lambda x: f"Layer {x}") or layers[-1]  # fmt: skip
+        target = cc.selectbox("Receiving node (right chart)", list(ctx.nodes),
+                              index=list(ctx.nodes).index("St1"), key="att_target")  # fmt: skip
+        h1, h2 = st.columns([1, 1.5])
+        if day in set(att["t"]):
+            h1.plotly_chart(F.attention_heatmap(att, day, int(layer), ctx.nodes), key="att_map",
+                            config=T.PLOT_CONFIG, theme=None)  # fmt: skip
+        else:
+            h1.info(f"Day {day} is a warm-up day: no policy decision, so no attention.")
+        h2.plotly_chart(F.attention_lines(att, target, int(layer), day, window),
+                        key="att_lines", config=T.PLOT_CONFIG, theme=None)  # fmt: skip
+        st.markdown(
+            '<p class="scd-note">Attention weights of today’s graph (the last day of the 7-day '
+            "window), recorded during the policy's single official run; nothing is recomputed "
+            "here. Each receiving node splits a weight of 1 over its incoming edges and itself. "
+            "<b>Read with care:</b> attention shows where the model looks, not why it orders "
+            "what it orders, and the edge features are constant on this network (A22), so the "
+            "weights cannot show that graph structure is the reason for any result.</p>",
+            unsafe_allow_html=True,
+        )
 
 with tab_ev:
     a, b, cc = st.columns([1.2, 3, 1.4], vertical_alignment="bottom")
@@ -531,8 +581,9 @@ with tab_custom:
             st.error(f"The shock was not run: {exc}")
     pol = ", ".join(T.policy_label(p) for p in custom.custom_policies(cfg))
     st.markdown(
-        f'<p class="scd-note">Policies in custom runs: {pol}. A learned policy joins this list '
-        f"only after its single official evaluation on the test days.</p>",
+        f'<p class="scd-note">Policies in custom runs: {pol}. The learned policies are not run '
+        f"on custom shocks: they saw the test days once, in their official evaluation "
+        f"(test lock, D-61, D-64), and are replayed from those logs only.</p>",
         unsafe_allow_html=True,
     )
 

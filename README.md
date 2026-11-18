@@ -8,6 +8,59 @@ with tuned base-stock and moving-average baselines. The full specification is
 
 Results describe a simulated chain only.
 
+## Reproduce in one command
+
+```
+python -m supply_chain_rl.reproduce              # raw files -> data -> baselines -> evaluation -> report tables
+python -m supply_chain_rl.reproduce --dashboard  # ... and open the dashboard
+python -m supply_chain_rl.reproduce --train      # also retrain every learned policy (days of CPU time)
+```
+
+It rebuilds the data from `data/raw/`, tunes the baselines, re-runs them on the test days and
+compares every cell with the official results, checks the frozen checkpoints against
+`reports/test_lock.json`, re-runs every policy on the validation days, and regenerates the Phase 7
+tables and figures (D-65). The learned policies' test run is not repeated: they saw the test days
+once, and the lock refuses a second run (D-61).
+
+## Phase 7 results (test days 1701 to 1941, 20 seeds, six scenarios)
+
+**Headline: `graph_lstm` (graph encoder + LSTM), fixed on validation evidence by Gate G3b.** Gate
+G3 failed (D-56); G3b is a post-hoc hypothesis tested on fresh training seeds (D-60, D-61). The
+architecture beat the flat model on fresh seeds; this does not show that graph structure is the
+reason (A22). `ppo` is the unchanged flat Phase 5 model. Full report:
+[`reports/phase_7.md`](reports/phase_7.md).
+
+- Against tuned base-stock, `graph_lstm` is cheaper in every scenario (total cost -338 to -377,
+  95% intervals below 0), fills more (+1.2 to +1.5 points) and swings orders far less (chain
+  bullwhip about 0.75 against about 3).
+- **Against `ppo` it shows no clear difference in total cost in any scenario** (it is better on
+  the reward-based cost, fill rate, bullwhip and inside the shock window). The pre-registered G3
+  contender `graph_nolstm` is the cheapest named policy on the test days; the headline does not
+  change after the fact.
+- The baselines recover faster after a single shock; the shock-trained `ppo_shock` is dearer
+  than `ppo` overall; no policy uses the price signal.
+
+| | |
+| --- | --- |
+| Total cost against base-stock, every scenario | ![paired](docs/figures/phase_7/phase7_paired_vs_basestock.png) |
+| Total cost against `ppo` | ![paired ppo](docs/figures/phase_7/phase7_paired_vs_ppo.png) |
+| Before, during and after the shock window | ![windows](docs/figures/phase_7/phase7_windows.png) |
+| Bullwhip ratio per level | ![bullwhip](docs/figures/phase_7/phase7_bullwhip.png) |
+| Every training seed on the test days | ![seeds](docs/figures/phase_7/phase7_training_seeds.png) |
+| Validation against test | ![val test](docs/figures/phase_7/phase7_val_vs_test.png) |
+| St1 orders under the price discount | ![price](docs/figures/phase_7/phase7_price_discount_orders.png) |
+| St1 stock under the combined shock | ![combined](docs/figures/phase_7/phase7_combined_stock.png) |
+
+Dashboard with the learned policies (replayed from their single official run):
+
+| | |
+| --- | --- |
+| Combined shock: base-stock, Graph + LSTM, PPO | ![09](docs/screenshots/09_p7_combined_graph_lstm_ppo.png) |
+| 3D scene, combined shock | ![10](docs/screenshots/10_p7_3d_combined_graph_lstm.png) |
+| Comparison table | ![11](docs/screenshots/11_p7_comparison_table.png) |
+| Attention panel (where the graph model looks; not why it orders) | ![12](docs/screenshots/12_p7_attention_panel.png) |
+| Bullwhip tab | ![13](docs/screenshots/13_p7_bullwhip_chart.png) |
+
 ## Setup (Python 3.11)
 
 ```
@@ -63,6 +116,8 @@ They show results already reported in Phases 3 and 4.
 | Comparison table (20-seed mean ± sd) | ![comparison](docs/screenshots/07_comparison_table.png) |
 | Bullwhip chart (20-seed means) | ![bullwhip](docs/screenshots/08_bullwhip_chart.png) |
 
+Checkpoints are not committed: back up `checkpoints/phase5/`, `checkpoints/phase6/`, `checkpoints/g3b/` and `checkpoints/phase7/` (the 20 frozen policies of D-61), and keep `results/phase7/test_official/` and `runs/test/`, which cannot be regenerated after the test lock.
+
 Phase 5 run order: `rl.bench`, `eval.baselines tune --network smoke --policies basestock`, the smoke `rl.train`, then the three prototype `rl.train` runs (about 20 min in parallel on the CPU), `rl.report smoke`, `rl.report prototype --select` and `eval.run ... ppo --split val`. Checkpoints go to `checkpoints/phase5/<network>_s<seed>/` (`last.pt`, `best.pt`, `curve.csv`, `train.log`, `done.json`) and the registered policy to `checkpoints/phase5/ppo_selected.pt`; they are not committed, so back up that folder. Results in `results/phase5/`; figures in `reports/figures/phase5_*.png`, with tracked copies in `docs/figures/phase_5/`.
 
 ## Commands (target interface; `fyp` in the manual is `supply_chain_rl` here)
@@ -90,7 +145,12 @@ Phase 5 run order: `rl.bench`, `eval.baselines tune --network smoke --policies b
 | `python -m supply_chain_rl.rl.train --network prototype --seed 1001` (and 1002, 1003) | 5 (available) |
 | `python -m supply_chain_rl.rl.report smoke` / `prototype --select` | 5 (available: validation comparison, sanity checks, G2; `--select` registers `ppo`) |
 | `python -m supply_chain_rl.eval.run --policies warmup,basestock,movavg,ppo --split val --scenarios control` | 5 (available: `ppo` logs for the dashboard; refused on the test split before G3) |
-| `python -m supply_chain_rl.rl.train --mode graph` | 6 |
+| `python -m supply_chain_rl.rl.train --variant <name> --seed <s>` and `python -m supply_chain_rl.rl.ablation` | 6 (available: graph variants, Gate G3) |
+| `python -m supply_chain_rl.rl.g3b` | 6/7 (available: Gate G3b, D-60) |
+| `python -m supply_chain_rl.eval.run --policies <baselines + rl.evaluated> --split test` | 7 (done once; `reports/test_lock.json` refuses a second learned test run) |
+| `python -m supply_chain_rl.eval.phase7` | 7 (available: Phase 7 tables and figures from the result files) |
+| `python -m supply_chain_rl.dashboard.screenshots --phase7` | 7 (available) |
+| `python -m supply_chain_rl.reproduce [--train] [--dashboard]` | 7 (available: one-command reproduction, D-65) |
 
 ## Data
 

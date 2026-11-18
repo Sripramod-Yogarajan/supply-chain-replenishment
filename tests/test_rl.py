@@ -18,7 +18,13 @@ import torch
 
 from supply_chain_rl.config import Config, load_config
 from supply_chain_rl.dashboard.custom import custom_policies
-from supply_chain_rl.eval.runner import check_split, network_config, score, score_policy
+from supply_chain_rl.eval.runner import (
+    TEST_LOCK,
+    check_split,
+    network_config,
+    score,
+    score_policy,
+)
 from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH, PROCESSED, ROOT
 from supply_chain_rl.policies.registry import LEARNED, POLICY_NAMES, make_policy
 from supply_chain_rl.rl.flat_ppo import ActorCritic, PPOSettings, gae
@@ -284,6 +290,7 @@ def test_D51_registry_loads_ppo_from_a_checkpoint(
 def test_M33_D41_learned_policy_refused_on_test_days_and_in_custom_runs(
     raw_config: dict[str, Any],
 ) -> None:
+    raw_config["rl"]["allow_test_split"] = False  # the state before the single test run
     cfg, data = _setup(raw_config)
     with pytest.raises(PermissionError, match="M-33"):
         check_split(cfg, "ppo", "test")
@@ -291,8 +298,13 @@ def test_M33_D41_learned_policy_refused_on_test_days_and_in_custom_runs(
         score(cfg, data, "ppo", None, [1], "test")
     check_split(cfg, "ppo", "val")  # allowed
     check_split(cfg, "basestock", "test")  # baselines unaffected
+    # The repository after the single learned test run (D-61, D-64): the switch is on, the lock
+    # exists, so a learned run on the test days is still refused and ppo stays out of custom runs.
     repo = load_config(CONFIG_PATH, DERIVED_PATH)
-    assert repo.section("rl")["allow_test_split"] is False
+    if repo.section("rl")["allow_test_split"]:
+        assert TEST_LOCK.exists()
+        with pytest.raises(PermissionError, match="D-61"):
+            check_split(repo, "ppo", "test")
     assert "ppo" not in custom_policies(repo)
 
 

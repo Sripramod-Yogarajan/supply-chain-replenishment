@@ -121,3 +121,99 @@ def test_D61_frozen_checkpoint_hash_and_test_once_lock(
                                                         "sha256": "0" * 64}}}  # fmt: skip
     with pytest.raises(ValueError, match="SHA-256"):
         runner.learned_checkpoint(validate(bad, cfg.n_days), "graph_x")
+
+
+def test_D64_attention_recorded_beside_the_log_without_changing_actions(
+    raw_config: dict[str, Any], tmp_path: Path
+) -> None:
+    import pandas as pd
+    import torch
+
+    from supply_chain_rl.config import validate
+    from supply_chain_rl.eval.runner import score_policy
+    from supply_chain_rl.rl.flat_ppo import PPOSettings
+    from supply_chain_rl.rl.policy import PPOPolicy
+    from supply_chain_rl.rl.train import build_model
+    from supply_chain_rl.sim.state import Topology
+
+    cfg, data = _setup(raw_config)
+    raw = dict(cfg.raw)
+    raw["dashboard"] = {**raw["dashboard"], "attention_policies": ["graph_x"]}
+    cfg = validate(raw, cfg.n_days)
+    torch.manual_seed(0)
+    model = build_model(cfg, data, PPOSettings.from_config(cfg.section("rl")), "graph_lstm")
+    topo = Topology.from_config(cfg)
+
+    def run(name: str, log_dir: Path | None) -> list[dict[str, Any]]:
+        pol = PPOPolicy(model, topo.ordering, name=name)
+        return score_policy(cfg, data, pol, [1, 2], "val", log_dir=log_dir)
+
+    plain = run("graph_x", None)  # no log dir: nothing recorded
+    rec = run("graph_x", tmp_path)
+    assert [{k: v for k, v in r.items()} for r in rec] == plain  # actions unchanged
+    att = pd.read_csv(tmp_path / "control" / "graph_x_s1_attention.csv")
+    log = pd.read_csv(tmp_path / "control" / "graph_x_s1.csv")
+    days = sorted(log.loc[log["phase"] != "warmup", "t"].unique())
+    assert sorted(att["t"].unique()) == days
+    assert set(att["layer"]) == {1, 2}
+    n_edges = len(data.skeleton.edge_names) + len(topo.nodes)
+    assert len(att) == len(days) * 2 * n_edges
+    sums = att.groupby(["t", "layer", "dst"])["weight"].sum()
+    assert np.allclose(sums, 1.0, atol=1e-5)  # softmax over each node's incoming edges
+    assert "St1->St1" in set(att["edge"]) and "W1->St1" in set(att["edge"])
+    # a policy that is not listed writes no attention file
+    run("graph_y", tmp_path)
+    assert not (tmp_path / "control" / "graph_y_s1_attention.csv").exists()
+
+
+def test_D66_paired_interval_verdict_and_reward_cost() -> None:
+    import math
+
+    import pandas as pd
+
+    from supply_chain_rl.eval.phase7 import family_test, paired
+
+    rng = np.random.default_rng(0)
+    base = rng.normal(5000, 200, 20)
+    rows = [{"policy": "a", "scenario": "control", "seed": i + 1, "total_cost": base[i] - 300,
+             "fill_rate": 0.98} for i in range(20)]  # fmt: skip
+    rows += [{"policy": "b", "scenario": "control", "seed": i + 1, "total_cost": base[i]
+              + rng.normal(0, 50), "fill_rate": 0.97} for i in range(20)]  # fmt: skip
+    runs = pd.DataFrame(rows)
+    r = paired(runs, "a", "b", "total_cost", "control")
+    d = (runs[runs.policy == "a"]["total_cost"].to_numpy()
+         - runs[runs.policy == "b"]["total_cost"].to_numpy())  # fmt: skip
+    half = 1.96 * d.std(ddof=1) / math.sqrt(20)  # Phase 3 rule
+    assert math.isclose(r["lo"], d.mean() - half) and math.isclose(r["hi"], d.mean() + half)
+    assert r["verdict"] == "a better" and r["seeds_a_better"] == int((d < 0).sum())
+    assert paired(runs, "a", "b", "fill_rate", "control")["verdict"] == "a better"  # higher
+    same = paired(runs, "b", "b", "total_cost", "control")
+    assert same["verdict"] == "no clear difference" and same["mean_diff"] == 0
+    # G3b-style family interval: t(0.975, 4) = 2.776 over five training seeds (D-60)
+    fam = {k: "a" for k in range(5)}
+    ft = family_test(runs, fam, None, "control")
+    assert ft["n"] == 5 and math.isclose(ft["lo"], ft["hi"])  # identical seeds: zero width
+
+
+def test_D65_reproduction_compares_cell_by_cell(tmp_path: Path) -> None:
+    import pandas as pd
+
+    from supply_chain_rl.reproduce import TRAINING_RUNS, compare
+
+    df = pd.DataFrame({"split": "test", "policy": ["basestock", "graph_lstm"],
+                       "scenario": "control", "seed": [1, 1], "total_cost": [5000.0, 4000.0],
+                       "fill_rate": [0.97, 0.98]})  # fmt: skip
+    a, b = tmp_path / "a.csv", tmp_path / "b.csv"
+    df.to_csv(a, index=False)
+    df.to_csv(b, index=False)
+    assert compare(a, b, ["basestock"]) == 0
+    df.loc[0, "total_cost"] = 5000.5
+    df.loc[1, "total_cost"] = 1.0  # a learned row: outside the compared policies
+    df.to_csv(b, index=False)
+    assert compare(a, b, ["basestock"]) == 1
+    # every training run behind the frozen list of D-61 (20 checkpoints + their sibling seeds)
+    outs = {o for _, _, o in TRAINING_RUNS}
+    assert (
+        "checkpoints/g3b/graph_lstm_s1005" in outs and "checkpoints/phase7/ppo_shock_s1002" in outs
+    )
+    assert len(TRAINING_RUNS) == 3 + 6 + 15 + 3

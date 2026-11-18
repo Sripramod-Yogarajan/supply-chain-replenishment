@@ -373,3 +373,15 @@ code.
 - Rebuilt and git-ignored: `data/processed/`, `reports/figures/`, `results/` (test results at the
   top level, validation results in `results/val/`, command logs in `results/repro_logs/`), `runs/`.
 - `.venv` was created with Python 3.11 and the unpinned versions listed in 3.1.
+
+## 9. Phase 7 status (2026-11-18)
+
+- **M-33 resolved.** The learned policies saw the test days once (`reports/test_lock.json`,
+  2026-11-18 22:56:35, D-61); the baseline test rows were identical before and after that run.
+- **M-34 resolved.** `price_discount_high` and `combined` (D-63) are in every Phase 7 table.
+- **M-35 resolved.** `python -m supply_chain_rl.reproduce` (D-65) runs the sequence from the raw
+  files and compares the results cell by cell; see `reports/phase_7.md`.
+- **M-36 applied** in `reports/phase_7.md` (tags per table).
+- **M-39 applied** in `reports/phase_7.md` (reward-based cost beside total cost in every table with
+  a learned policy).
+- The St1 test level of 6.4 is confirmed: 0.817 of the training mean (validation 1.061).

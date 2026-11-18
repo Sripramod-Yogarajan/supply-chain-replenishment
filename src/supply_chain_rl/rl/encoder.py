@@ -220,8 +220,13 @@ class GraphActorCritic(nn.Module):
     # --------------------------------------------------------------------- PPO interface
 
     def mean(self, x: torch.Tensor) -> torch.Tensor:
-        h, _ = self.summaries(x)
-        return torch.sigmoid(self.actor(h[:, self.ordering_idx]).squeeze(-1))
+        return self.mean_attention(x)[0]
+
+    def mean_attention(self, x: torch.Tensor) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        """Actor mean and the attention weights per layer from one encoder pass (the mean is the
+        same tensor ``mean`` returns; the dashboard's attention panel, Phase 7)."""
+        h, attn = self.summaries(x)
+        return torch.sigmoid(self.actor(h[:, self.ordering_idx]).squeeze(-1)), attn
 
     def value(self, x: torch.Tensor) -> torch.Tensor:
         h, _ = self.summaries(x)

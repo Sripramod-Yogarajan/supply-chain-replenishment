@@ -13,6 +13,7 @@ import json
 import math
 import re
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -111,6 +112,13 @@ def test_store_lists_scenarios_and_registry_policies(bundle: Bundle) -> None:
     assert derive.scenario_label(store.load_scenario(bundle.paths, "test", "control")).startswith(
         "Control"
     )
+    # D-63: a scenario with two shocks names both, so it never looks like a single-shock one
+    two = {"id": "combined", "shocks": [scn["shocks"][0],
+           {"type": "demand_spike", "target": ["St1"], "k": 1.5, "start_day": 1750,
+            "end_day": 1759}]}  # fmt: skip
+    label = derive.scenario_label(two)
+    assert label.startswith("Combined: transit delay +3 d") and "demand spike x1.5, St1" in label
+    assert label != derive.scenario_label(scn)
 
 
 def test_results_files_name_their_split(bundle: Bundle) -> None:
@@ -572,7 +580,12 @@ def test_policy_colours_are_fixed_and_distinct() -> None:
     known = ["warmup", "basestock", "movavg", "ppo", "new_a", "new_b"]
     a, b = T.policy_colour("new_a", known), T.policy_colour("new_b", known)
     assert a != b and a not in fixed and b not in fixed
-    assert T.policy_label("ppo") == "PPO agent" and T.policy_label("other") == "other"
+    assert T.policy_label("ppo") == "PPO agent (flat, Phase 5)"
+    assert T.policy_label("other") == "other"
+    # Phase 7 (D-61): the named learned policies keep their own colours; the headline is labelled
+    named = [T.policy_colour(p) for p in ("graph_lstm", "graph_nolstm", "ppo_shock")]
+    assert len(set(named + fixed)) == 7
+    assert "headline" in T.policy_label("graph_lstm")
     assert T.rgba("#0072B2", 0.5) == "rgba(0, 114, 178, 0.5)"
 
 
@@ -639,7 +652,9 @@ def test_custom_shock_runs_through_the_harness_and_is_cached(bundle: Bundle) -> 
     assert set(store.load_results(paths, "test", sid)["policy"]) == set(POLICIES)
 
 
-def test_custom_shock_validation_and_policy_list(bundle: Bundle) -> None:
+def test_D64_custom_shock_validation_and_policy_list(
+    bundle: Bundle, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """D-41, A14: sizes have no defaults, targets must exist, the window must lie in the decision
     days of the test split; only the policies listed in the config may be run."""
     cfg = bundle.cfg
@@ -669,10 +684,19 @@ def test_custom_shock_validation_and_policy_list(bundle: Bundle) -> None:
     assert custom.custom_policies(cfg) == ["warmup", "basestock", "movavg"]
     raw = copy.deepcopy(cfg.raw)
     raw["dashboard"]["custom_policies"] = ["basestock", "ppo", "sarsa"]
+    raw["rl"]["allow_test_split"] = False
     # ppo is refused before its official test evaluation (D-41); sarsa is not in the registry
     assert custom.custom_policies(golden_config(raw)) == ["basestock"]
     raw["rl"]["allow_test_split"] = True  # after G3 (M-33)
+    from supply_chain_rl.eval import runner
+
+    monkeypatch.setattr(runner, "TEST_LOCK", tmp_path / "no_lock.json")
     assert custom.custom_policies(golden_config(raw)) == ["basestock", "ppo"]
+    # D-64: once the single learned test run is locked, learned policies stay out of custom runs
+    lock = tmp_path / "test_lock.json"
+    lock.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(runner, "TEST_LOCK", lock)
+    assert custom.custom_policies(golden_config(raw)) == ["basestock"]
 
 
 # ------------------------------------------------------------------------------ the app
@@ -691,8 +715,8 @@ def test_app_renders_every_panel_and_updates_in_under_a_second() -> None:
     at = AppTest.from_file(str(ROOT / "app" / "dashboard.py"), default_timeout=120)
     at.run()
     assert not at.exception and not at.error
-    assert [t.label for t in at.tabs] == ["Day table", "Comparison", "Bullwhip", "Event log",
-                                          "Custom shock", "Export"]  # fmt: skip
+    assert [t.label for t in at.tabs] == ["Day table", "Comparison", "Bullwhip", "Attention",
+                                          "Event log", "Custom shock", "Export"]  # fmt: skip
     assert len(at.radio[0].options) >= 5  # control and the four configured shocks
     html = " ".join(str(m.value) for m in at.markdown)
     csv = pd.read_csv(ROOT / "results" / "test" / "results.csv")

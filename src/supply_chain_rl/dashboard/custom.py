@@ -21,6 +21,7 @@ import pandas as pd
 
 from supply_chain_rl.config import Config
 from supply_chain_rl.dashboard import store
+from supply_chain_rl.eval import runner
 from supply_chain_rl.eval.run import evaluate, write_results
 from supply_chain_rl.eval.runner import eval_seeds
 from supply_chain_rl.eval.scenarios import Scenario
@@ -36,10 +37,12 @@ EXPLORATORY = ("supplier_outage",)  # shown as exploratory: no configured scenar
 def custom_policies(cfg: Config) -> list[str]:
     """Policies allowed in custom runs: the configured list, limited to the registry (D-41).
 
-    A learned policy is left out while ``rl.allow_test_split`` is false: custom shocks run on the
-    test days, which it may see only once, after G3 (M-33, D-41)."""
+    A learned policy is left out while ``rl.allow_test_split`` is false (custom shocks run on the
+    test days, M-33, D-41) and once ``reports/test_lock.json`` exists (test once, D-61, D-64): the
+    learned policies are replayed from their single official test run only."""
     allowed = (cfg.raw.get("dashboard") or {}).get("custom_policies") or []
     test_ok = bool((cfg.raw.get("rl") or {}).get("allow_test_split", False))
+    test_ok = test_ok and not runner.TEST_LOCK.exists()
     return [p for p in POLICY_NAMES if p in allowed and (test_ok or p not in LEARNED)]
 
 

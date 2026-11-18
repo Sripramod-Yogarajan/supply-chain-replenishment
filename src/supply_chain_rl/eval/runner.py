@@ -176,10 +176,21 @@ def score_policy(
     if window is None and shocks:
         window = (min(s["start_day"] for s in shocks), max(s["end_day"] for s in shocks))
     rows = []
+    record = (log_dir is not None and getattr(policy, "has_attention", False)
+              and policy_name in attention_policies(cfg))  # fmt: skip
     for seed in seeds:
         opts = {"split": split, "decision_days": "all", "shocks": list(shocks),
                 "scenario_id": scenario_id}  # fmt: skip
+        if record:
+            policy.record_attention = True  # type: ignore[attr-defined]
+            policy.attention_log = []  # type: ignore[attr-defined]
         log = play(env, policy, seed, opts)
+        if record and log_dir is not None:
+            from supply_chain_rl.sim.logs import write_log
+
+            att = attention_frame(log, policy.attention_log, data, env.topo.nodes)  # type: ignore[attr-defined]
+            write_log(att, log_dir / scenario_id / f"{policy_name}_s{seed}_attention.csv")
+            policy.record_attention = False  # type: ignore[attr-defined]
         if logs_out is not None:
             logs_out.append(log)
         if log_dir is not None:
@@ -194,6 +205,33 @@ def score_policy(
         rows.append({"policy": policy_name, "scenario": scenario_id, "seed": seed,
                      **policy.params(), **m})  # fmt: skip
     return rows
+
+
+def attention_policies(cfg: Config) -> list[str]:
+    """Graph policies whose attention weights are written beside their logs (Phase 7, D-64)."""
+    return [str(p) for p in (cfg.raw.get("dashboard") or {}).get("attention_policies") or []]
+
+
+def attention_frame(
+    log: pd.DataFrame, attention: Sequence[Sequence[Any]], data: SimData, nodes: Sequence[str]
+) -> pd.DataFrame:
+    """Long table of today's attention weights: one row per decision day, layer and edge.
+
+    Edges are the skeleton's edges in order, then one self-loop per node (``St1->St1``), as in
+    ``rl.encoder.with_self_loops``. Weights into one node sum to 1 per day and layer.
+    """
+    days = sorted(log.loc[log["phase"] != "warmup", "t"].unique())
+    if len(days) != len(attention):
+        raise ValueError(f"{len(attention)} attention records for {len(days)} decision days")
+    sk = data.skeleton
+    names = [*sk.edge_names, *(f"{n}->{n}" for n in nodes)]
+    src = [*(nodes[i] for i in sk.edge_index[0]), *nodes]
+    dst = [*(nodes[i] for i in sk.edge_index[1]), *nodes]
+    rows = [{"t": int(t), "layer": layer + 1, "edge": names[e], "src": src[e], "dst": dst[e],
+             "weight": float(w)}
+            for t, rec in zip(days, attention, strict=True)
+            for layer, a in enumerate(rec) for e, w in enumerate(a)]  # fmt: skip
+    return pd.DataFrame(rows)
 
 
 def load_tuned(path: Path = TUNED_PATH) -> dict[str, dict[str, float]]:

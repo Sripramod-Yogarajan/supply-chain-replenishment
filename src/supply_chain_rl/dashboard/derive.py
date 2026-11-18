@@ -150,15 +150,24 @@ def scenario_label(scn: Mapping[str, Any]) -> str:
     """Short name for the scenario picker."""
     if not scn["shocks"]:
         return "Control (no shock)"
-    s = scn["shocks"][0]
-    size = {
-        "transit_delay": lambda: f"+{int(s['delta_days'])} d, {road_name(shock_targets(s)[0])}",
-        "demand_spike": lambda: f"x{float(s['k']):g}, {', '.join(shock_targets(s))}",
-        "price_discount": lambda: f"-{float(s['d']):.0%}, u = {float(s['u']):g}",
-        "supplier_outage": lambda: f"{float(s['f']):.0%} shipped",
-    }[s["type"]]()
+
+    def size(s: Mapping[str, Any]) -> str:
+        return {
+            "transit_delay": lambda: f"+{int(s['delta_days'])} d, {road_name(shock_targets(s)[0])}",
+            "demand_spike": lambda: f"x{float(s['k']):g}, {', '.join(shock_targets(s))}",
+            "price_discount": lambda: f"-{float(s['d']):.0%}, u = {float(s['u']):g}",
+            "supplier_outage": lambda: f"{float(s['f']):.0%} shipped",
+        }[s["type"]]()
+
     head = "Custom: " if str(scn["id"]).startswith("custom_") else ""
-    return f"{head}{SHOCK_NAMES[s['type']]} ({size})"
+    if len(scn["shocks"]) > 1:  # D-63: the combined scenario names every shock
+        return (
+            head
+            + "Combined: "
+            + " + ".join(f"{SHOCK_NAMES[s['type']].lower()} {size(s)}" for s in scn["shocks"])
+        )
+    s = scn["shocks"][0]
+    return f"{head}{SHOCK_NAMES[s['type']]} ({size(s)})"
 
 
 def active_shocks(scn: Mapping[str, Any], t: int) -> list[Mapping[str, Any]]:
