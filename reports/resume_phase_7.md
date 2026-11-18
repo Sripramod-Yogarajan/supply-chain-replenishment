@@ -1,37 +1,25 @@
-# Resume note: Phase 7 stopped before the test run
+# Resume note: Phase 7 is finished
 
-Stopped on 2026-11-18, at the commit "Phase 7 pre-test: G3b verdict, frozen list, ppo_shock,
-combined scenario".
-
-## Done (D-60 to D-63)
-
-- G3b was run and passed (D-60, D-61). The headline is `graph_lstm`, G3b training seed 1005. G3 stays
-  failed (D-56).
-- The frozen list is in `config.yaml` under `rl.evaluated`: 20 checkpoints with SHA-256, and the full hashes
-  are in D-61. All of them were verified on 2026-11-18.
-- `ppo_shock` (D-62) was trained on 3 seeds; seed 1002 was selected.
-- The `combined` scenario was added (D-63).
-- Baseline reproduction on the test days matched exactly (0 cells differ).
+Updated on 2026-11-18. Phase 7 was finished and accepted by the owner at commit `7eb48e4`
+("Phase 7: single test run, comparison tables, attention panel and reproduction").
 
 ## State
 
-- `rl.allow_test_split: false`.
-- `reports/test_lock.json` does not exist.
-- No learned policy has run on the test days (1701 to 1941).
-- Checkpoints are not committed. A backup zip of `checkpoints/{phase5,phase6,g3b,phase7}` is in
-  `D:\MyProject\`.
+- The single learned test run is done (2026-11-18 22:56:35): 20 frozen learned policies plus
+  warm-up, base-stock and moving average, 6 scenarios, seeds 1 to 20.
+- `reports/test_lock.json` exists and stays: any further learned run on the test days
+  (1701 to 1941) is refused. Baseline test runs remain allowed.
+- `rl.allow_test_split: true` is kept only because the lock enforces test-once (D-61, D-64).
+- No model, label or rule changes after the test (D-61). The headline stays `graph_lstm`
+  (G3 failed, G3b passed post-hoc; A22 wording); `ppo` stays the flat Phase 5 model.
+- Results and the 13.2 checklist: `reports/phase_7.md`. Reproduction:
+  `python -m supply_chain_rl.reproduce` (D-65).
+- Not committed, keep backed up: `checkpoints/{phase5,phase6,g3b,phase7}`,
+  `results/phase7/test_official/` and `runs/test/` (cannot be regenerated after the lock).
 
-## Next step: the single test run (Phase 7 step 4)
+## Next step (optional): Phase 8, not started
 
-It waits for the owner to confirm two things:
-
-1. The frozen list as recorded in D-61.
-2. The naming: `ppo` stays the flat Phase 5 model, and the headline label sits on `graph_lstm`.
-
-Message to send to continue:
-
-> I confirm the frozen list and the naming. Set rl.allow_test_split to true, run the single test
-> evaluation (all evaluated policies plus warmup, basestock and movavg, all 6 scenarios, seeds
-> 1 to 20), write the test lock, then continue with steps 5 to 8 and the Phase 7 report.
-
-After that run, `reports/test_lock.json` refuses any further learned run on the test days.
+Manual 13.3: the eight-node network and experiments E1 to E8. Before it starts, settle the store
+list (M-37, D-28: CA_2 was replaced by CA_3; the TX stores are unchecked). Any idea suggested by
+the Phase 7 test results (for example that `graph_nolstm` was cheaper) may only be tested there as
+a new hypothesis fixed in advance, on new days or a new network.
