@@ -219,11 +219,12 @@ def fig_curves(path: Path) -> None:
             c = c.dropna(subset=["val_total_cost"])
             ax.plot(c["update"], c["val_total_cost"], lw=1.2, label=f"seed {k}",
                     color=COLOURS[fam], alpha=0.35 + 0.13 * (k - 2001))  # fmt: skip
-        ax.set_title(f"{fam}: validation total cost (selection seeds 201-205)")
+        ax.set_title(fam)
         ax.set_xlabel("PPO update")
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8)
     axes[0].set_ylabel("total cost (relative weights)")
+    fig.suptitle("Validation total cost during training (selection seeds 201-205)")
     fig.savefig(path, dpi=130)
     plt.close(fig)
 
@@ -247,7 +248,7 @@ def fig_family(fc: pd.DataFrame, ref: str, path: Path) -> None:
     ax.set_title(
         f"Test days: family minus {ref} (mean of 5 training seeds, t interval; below 0 = cheaper)"
     )
-    ax.legend()
+    ax.legend(loc="lower right")
     ax.grid(axis="y", alpha=0.3)
     fig.savefig(path, dpi=130)
     plt.close(fig)
