@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from supply_chain_rl.policies.basestock import BaseStock
+from supply_chain_rl.policies.basestock import BaseStock, chain_names
 from supply_chain_rl.policies.movavg import MovingAverage
 from supply_chain_rl.policies.warmup import warmup_orders
 from supply_chain_rl.sim.data import SimData
@@ -67,10 +67,16 @@ def make_policy(
     if name not in POLICY_NAMES:
         raise ValueError(f"unknown policy {name!r}; expected one of {POLICY_NAMES}")
     params = dict(params or {})
-    if set(params) != set(PARAM_NAMES[name]):
+    per_chain = bool(PARAM_NAMES[name]) and set(params) == set(chain_names(PARAM_NAMES[name], topo))
+    if set(params) != set(PARAM_NAMES[name]) and not per_chain:
         raise ValueError(
-            f"policy {name} needs parameters {PARAM_NAMES[name]}, got {sorted(params)}"
+            f"policy {name} needs parameters {PARAM_NAMES[name]} (or one pair per chain: "
+            f"{chain_names(PARAM_NAMES[name], topo)}), got {sorted(params)}"
         )
+    if per_chain and name == "basestock":
+        return BaseStock.build_per_chain(topo, data, min_lead_time, params)
+    if per_chain and name == "movavg":
+        return MovingAverage.build_per_chain(topo, data, min_lead_time, params)
     if name == "basestock":
         return BaseStock.build(topo, data, min_lead_time, params["m_store"], params["m_warehouse"])
     if name == "ppo":

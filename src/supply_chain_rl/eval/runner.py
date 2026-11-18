@@ -18,13 +18,14 @@ import pandas as pd
 
 from supply_chain_rl.config import Config, validate
 from supply_chain_rl.eval.metrics import run_metrics
+from supply_chain_rl.paths import RESULTS as RESULTS  # re-exported (D-67 profile)
 from supply_chain_rl.paths import ROOT
+from supply_chain_rl.paths import TEST_LOCK as TEST_LOCK
 from supply_chain_rl.policies.registry import LEARNED, Policy, make_policy
 from supply_chain_rl.sim.data import SimData
 from supply_chain_rl.sim.env import SupplyChainEnv
 from supply_chain_rl.sim.state import Topology
 
-RESULTS = ROOT / "results"
 TUNED_PATH = RESULTS / "baselines_tuned.json"
 SMOKE_TUNED_PATH = RESULTS / "smoke" / "baselines_tuned.json"  # smoke network (D-26)
 
@@ -69,7 +70,7 @@ def play(
     return env.log_frame()
 
 
-TEST_LOCK = ROOT / "reports" / "test_lock.json"  # written after the single learned test run
+# TEST_LOCK (paths): written after the single learned test run of the active network (D-61, D-67)
 
 
 def is_learned(cfg: Config, policy_name: str) -> bool:
@@ -96,6 +97,36 @@ def check_split(cfg: Config, policy_name: str, split: str, lock: Path | None = N
             f"{policy_name}: the learned policies' single test evaluation is done ({lock}); "
             "a second learned run on the test days is refused (D-61)"
         )
+    locked = locked_checkpoints(lock.parent)
+    sha = checkpoint_sha256(cfg, policy_name)
+    if sha in locked:
+        raise PermissionError(
+            f"{policy_name}: its checkpoint already had its single test run ({locked[sha]}); "
+            "refused under every profile (D-67)"
+        )
+
+
+def locked_checkpoints(reports: Path = TEST_LOCK.parent) -> dict[str, str]:
+    """SHA-256 of every checkpoint listed in any ``test_lock*.json`` -> the lock file (D-67)."""
+    out: dict[str, str] = {}
+    for f in sorted(reports.glob("test_lock*.json")):
+        rec = json.loads(f.read_text(encoding="utf-8"))
+        for v in rec.get("policies", {}).values():
+            out[str(v["sha256"])] = f.name
+    return out
+
+
+def checkpoint_sha256(cfg: Config, policy_name: str) -> str | None:
+    """SHA-256 of a learned policy's checkpoint file, or None if the file does not exist."""
+    rl = cfg.section("rl")
+    ev = rl.get("evaluated") or {}
+    if policy_name in ev:
+        path = ROOT / str(ev[policy_name]["checkpoint"])
+    elif rl.get("selected_checkpoint"):
+        path = ROOT / str(rl["selected_checkpoint"])
+    else:
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
 
 
 def learned_checkpoint(cfg: Config, policy_name: str) -> Path:

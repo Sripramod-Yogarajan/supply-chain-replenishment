@@ -34,7 +34,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from supply_chain_rl.paths import ROOT
+from supply_chain_rl.paths import ROOT, require_prototype
 
 BASELINES = ("warmup", "basestock", "movavg")
 ID_COLS = ["split", "policy", "scenario", "seed"]
@@ -105,6 +105,7 @@ def train_all() -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    require_prototype("reproduce")  # D-67: the four-node reproduction only
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)  # fmt: skip
     ap.add_argument("--train", action="store_true", help="retrain every learned policy (slow)")

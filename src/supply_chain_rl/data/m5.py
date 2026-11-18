@@ -139,6 +139,30 @@ def choose_item(
                 raise
 
 
+def fixed_item(
+    sales: pd.DataFrame,
+    prices: pd.DataFrame,
+    calendar: pd.DataFrame,
+    stores: list[str],
+    item_id: str,
+    n_days: int,
+    min_nonzero_share: float,
+) -> ItemChoice:
+    """A given item instead of the choice of manual 6.2 (eight-node network, DECISIONS D-68).
+
+    The candidate table holds that item's row only, computed as :func:`select_item` does (shares
+    from its common first day); the item must exist in every store.
+    """
+    one = sales[sales["item_id"] == item_id]
+    missing = sorted(set(stores) - set(one["store_id"]))
+    if missing:
+        raise NoItemError(f"{item_id} has no sales row in {missing}")
+    cand = select_item(one, prices[prices["item_id"] == item_id], calendar, stores, 0.0,
+                       n_days).candidates  # fmt: skip
+    cand["passes"] = cand["min_share"] >= min_nonzero_share
+    return ItemChoice(item_id, int(cand.iloc[0]["first_day"]), min_nonzero_share, cand)
+
+
 # ------------------------------------------------------------------------------ tables
 
 

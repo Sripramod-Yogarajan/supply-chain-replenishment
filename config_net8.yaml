@@ -1,0 +1,144 @@
+# Eight-node network of Phase 8 (DECISIONS D-67 to D-72). Used only with SCRL_PROFILE=net8.
+# Every setting not marked D-6x is copied unchanged from config.yaml (D-69).
+# All chosen settings (source tag C). Derived dataset facts live in derived_net8.yaml.
+project:
+  network_id: net8         # D-67: profile check
+  seed: 42
+  n_eval_seeds: 20
+data:
+  m5_dir: data/raw/m5
+  dataco_csv: data/raw/dataco/DataCoSupplyChainDataset.csv
+  dataco_encoding: latin-1
+  # item_id and first_day are RESULTS of the item-choice algorithm (manual 6.2); they are recorded
+  # in derived.yaml (DECISIONS.md D-3), not here.
+  min_nonzero_share: 0.9   # item selection: minimum share of non-zero sales days
+  fixed_item: FOODS_3_586  # D-68: kept from the four-node network, not re-chosen
+network:                   # eight-node network (D-69 c); stores of W2 by the rule of D-68
+  nodes:
+    - {id: S1, type: supplier}
+    - {id: S2, type: supplier}
+    - {id: W1, type: warehouse, supplier: S1}
+    - {id: W2, type: warehouse, supplier: S2}
+    - {id: St1, type: store, m5_store: CA_1, warehouse: W1}
+    - {id: St2, type: store, m5_store: CA_3, warehouse: W1}
+    - {id: St3, type: store, m5_store: TX_2, warehouse: W2}
+    - {id: St4, type: store, m5_store: TX_3, warehouse: W2}
+  edge_mode:
+    supplier_to_warehouse: Standard Class
+    warehouse_to_store: Second Class
+  add_reverse_edges: true
+splits:
+  train: [1, 1500]
+  val: [1501, 1700]
+  test: [1701, 1941]
+sim:
+  history_window: 7        # graphs per observation (today included)
+  warmup_days: 6           # history_window - 1
+  episode_decision_days: 60
+  min_lead_time: 1
+  order_cap_multiple: 3.0  # cap = multiple x average daily demand of the node
+  start_stock_days_store: 3
+  start_stock_days_warehouse: 7
+  start_pipeline_days: [1, 2, 3, 4]   # pre-loaded shipments due on these days (DECISIONS D-13)
+  cost_holding: 0.05       # per unit of end-of-day stock, every stocking node
+  cost_stockout: 1.0       # per unit short, stores only
+  cost_order_change: 0.1   # per unit of change from yesterday's order
+  reward_scale: auto       # divide by the sum of the stores' avg_d (DECISIONS D-14)
+  supplier_capacity: unlimited
+shocks: []                 # list of shock records (manual Section 7.3)
+baselines:
+  basestock_grid: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]   # x avg demand x (mean lead time + 1)
+  movavg_z_grid:  [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+  refine_step: 0.05        # fine search within one coarse step of the best value (DECISIONS D-19)
+  tuning_seeds: [101, 102, 103, 104, 105]   # training days only; evaluation uses seeds 1..n_eval_seeds
+  tuning_objective: total_cost   # holding + stockout (manual 10.2); full_cost adds order changes (D-19)
+  tune_per_chain: true     # D-69 d: one pair per warehouse chain, each on its own chain cost
+scenarios:                 # Phase 3 evaluation scenarios on the test days (manual 10.3), one shock each
+  window: [1750, 1759]     # inclusive shock days (43 decision days before, 182 after)
+  shocks:
+    transit_delay:  {type: transit_delay, target: W1->St1, delta_days: 3}
+    demand_spike:   {type: demand_spike, target: [St1], k: 1.5}
+    # u = demand uplift of the discount (assumed, ASSUMPTIONS A14, DECISIONS D-23): M5 price cuts
+    # of other FOODS items in CA_1/CA_3 give 0.17 (95% 0.04 to 0.48; supply_chain_rl.data.uplift)
+    price_discount: {type: price_discount, target: [St1], d: 0.2, u: 0.2}
+    price_discount_high: {type: price_discount, target: [St1], d: 0.2, u: 0.5}   # sensitivity: top of the range
+    combined: {shocks: [transit_delay, demand_spike]}   # D-63: both at St1 in the same window
+rl:
+  embed_dim: 16            # Phase 6 (graph encoder, D-55)
+  gat_layers: 2
+  lstm_hidden: 16
+  pretrain_encoder: false
+  graph_head_hidden: [64]  # shared actor head and critic head on the node summaries
+  phase6_target_kl: null   # Phase 5 PPO updates, no KL stop (D-54)
+  phase6_dir: checkpoints/net8   # D-70 (g): <model>_s<seed>; not committed; back this folder up
+  variants:                # D-70 (f): the three models of Phase 8
+    flat: {model: flat}
+    graph_nolstm: {lstm: false}
+    graph_lstm: {}
+  net8:                    # D-70, D-71: G4b and G4c
+    training_seeds: [2001, 2002, 2003, 2004, 2005]   # fresh, never used before
+    flat: flat
+    contender: graph_lstm  # primary question
+    secondary: graph_nolstm   # hypothesis suggested by the Phase 7 test results; never decides
+    split: val
+    per_seed_z: 1.96       # interval over evaluation seeds 1-20 (Phase 3 rule)
+    mean_interval: t_over_training_seeds   # t(0.975, 4) = 2.776 over the 5 per-seed means
+    min_seeds_clearly_better: 4
+    max_flagged_per_family: 1   # 2 or more flagged runs in flat or graph_lstm -> inconclusive
+    g4b_min_rising: 4      # seeds with a rising learning curve (A31)
+  # PPO (Phase 5; manual 12.1 as amended by D-35; settings of D-48 to D-50)
+  discount: 0.99
+  gae_lambda: 0.95
+  clip: 0.2
+  steps_per_update: 1920   # whole episodes only: n_envs x 4 episodes x 60 decision days (D-50)
+  lr: 0.0003
+  n_envs: 8                # training episodes played side by side
+  flat_hidden: [128, 128]  # actor and critic: two tanh layers each, separate networks
+  epochs_per_update: 10
+  minibatch_size: 256
+  entropy_coef: 0.001
+  value_coef: 0.5
+  max_grad_norm: 0.5       # applied to actor and critic separately
+  init_mean_fraction: 0.3333   # starting mean action = average demand (D-35 a)
+  init_std: 0.10           # starting spread, in fractions of the cap (D-35 a)
+  eval_every_updates: 10
+  selection_seeds: [201, 202, 203, 204, 205]   # checkpoint selection on validation days (D-35 d)
+  min_updates: 200
+  max_updates: 1000
+  patience_evals: 15       # stop after this many evaluations without a lower validation cost
+  training_seeds: [1001, 1002, 1003]   # at least three (D-35 e)
+  train_start_stock_days:  # starting stock drawn per node in training episodes only (D-35 c, D-49)
+    store: [0.5, 4.0]
+    warehouse: [0.25, 8.0]
+  device: cpu              # measured faster than the GPU for these networks (D-48)
+  torch_threads: 1
+  checkpoint_dir: checkpoints/net8/phase5   # unused in Phase 8 (runs use phase6_dir)
+  selected_checkpoint: null   # no "ppo" policy on the eight-node network
+  evaluated: {}            # D-72 (l): the frozen list is added after G4c, before the test run
+  allow_test_split: false  # M-33: true only for the single eight-node test run (D-71 G4d)
+  smoke:                   # Phase 5 smoke test (D-26)
+    nodes:
+      - {id: S1, type: supplier}
+      - {id: W1, type: warehouse, supplier: S1}
+      - {id: St1, type: store, m5_store: CA_1, warehouse: W1}
+    max_updates: 300
+    min_updates: 100
+    training_seeds: [1001]
+dashboard:                 # Phase 4 simulation dashboard (DECISIONS D-33, D-39, D-41)
+  replay_seed: 1           # the run that is replayed; KPI cards use all evaluation seeds
+  reference_policy: basestock   # KPI differences are shown against this policy (D-33 b)
+  # Map colours by days of cover = end-of-day stock / the node's average daily demand on training
+  # days. Chosen from training and validation days (D-39): below `critical` a store stocks out the
+  # next day in 29 to 49% of cases and a warehouse rations in 57 to 84%; at or above `low` in 0 to 3%
+  # (stores) and 7 to 11% (base-stock warehouse).
+  cover_days:
+    store:     {critical: 1.0, low: 1.5}
+    warehouse: {critical: 0.25, low: 1.0}
+  play_speeds: [1, 2, 5]   # simulated days per second (target)
+  chart_window_days: 60    # width of the charts' follow-the-day view
+  # Custom shocks are demonstration only (D-41). A learned policy is added to this list only after
+  # its single official evaluation on the test days.
+  custom_policies: [warmup, basestock, movavg]
+  # Phase 7 (D-64): graph policies whose attention weights are written beside their logs during
+  # the single test run (the attention panel reads them; no learned policy runs on test days again)
+  attention_policies: []   # D-72 (l): no attention recording on eight nodes

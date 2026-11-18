@@ -15,3 +15,4 @@ checkpoints/
 .env
 *.pt
 *.parquet
+backup_*_manifest.sha256

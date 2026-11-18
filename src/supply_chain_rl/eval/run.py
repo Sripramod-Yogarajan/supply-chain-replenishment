@@ -40,7 +40,7 @@ from supply_chain_rl.eval.runner import (
     score,
 )
 from supply_chain_rl.eval.scenarios import Scenario, scenarios
-from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH, ROOT
+from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH, PROFILE, ROOT, RUNS
 from supply_chain_rl.sim.data import SimData, load_sim_data
 
 KEY_METRICS = ("total_cost", "fill_rate", "stockout_units", "holding_cost", "order_change_cost",
@@ -199,9 +199,10 @@ def write_test_lock(
         ck = learned_checkpoint(cfg, p)
         frozen[p] = {"checkpoint": ck.relative_to(ROOT).as_posix(),
                      "sha256": hashlib.sha256(ck.read_bytes()).hexdigest()}  # fmt: skip
-    rec = {"date": time.strftime("%Y-%m-%d %H:%M:%S"), "decision": "D-61", "split": "test",
+    decision = "D-61" if PROFILE == "prototype" else "D-71"
+    rec = {"date": time.strftime("%Y-%m-%d %H:%M:%S"), "decision": decision, "split": "test",
            "policies": frozen, "scenarios": list(scenario_ids), "seeds": list(seeds),
-           "config_hash": cfg.hash()}  # fmt: skip
+           "config_hash": cfg.hash(), **({} if PROFILE == "prototype" else {"profile": PROFILE})}  # fmt: skip
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(rec, indent=1) + "\n", encoding="utf-8")
 
@@ -224,7 +225,7 @@ def main(argv: list[str] | None = None) -> None:
     tuned = load_tuned() if any(p not in ("warmup", "ppo") for p in policies) else {}
     seeds = eval_seeds(cfg, args.seeds)
     out_dir: Path = args.out_dir or RESULTS / args.split
-    log_root = None if args.no_logs else ROOT / "runs" / args.split
+    log_root = None if args.no_logs else RUNS / args.split
     t0 = time.perf_counter()
     runs = evaluate(cfg, data, policies, tuned, seeds, args.split,
                     args.scenarios.split(",") if args.scenarios else None, log_root, print)  # fmt: skip

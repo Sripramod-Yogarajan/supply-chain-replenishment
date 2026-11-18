@@ -15,6 +15,13 @@ the search continues (manual 10.4 item 2); extensions are reported. The manual's
 (store first, then warehouse, then store again) was tried first and stopped 2.7% above the joint
 optimum of the moving-average baseline, because the two parameters interact (D-19).
 
+**Per chain** (``baselines.tune_per_chain``, eight-node network, DECISIONS D-69 d): each warehouse
+chain (a warehouse and its stores) gets its own pair, found by the same search on the chain's own
+total cost (holding of its warehouse and stores plus its stores' stockouts). Every candidate pair is
+played on the whole network with the pair in every chain; the chains share no node, supplier or
+road, so each chain's cost depends only on its own pair. The chosen set is then played once more
+and its network cost must equal the sum of the chains' costs.
+
 Outputs: ``results/baselines_tuned.json`` (chosen values, every evaluated pair, settings) and
 ``reports/figures/tuning_<policy>.png`` (cost surface and cost against each parameter).
 """
@@ -32,10 +39,20 @@ from typing import Any
 import numpy as np
 
 from supply_chain_rl.config import Config, load_config, validate
-from supply_chain_rl.eval.runner import SMOKE_TUNED_PATH, TUNED_PATH, network_config, score
+from supply_chain_rl.eval.metrics import run_metrics
+from supply_chain_rl.eval.runner import (
+    SMOKE_TUNED_PATH,
+    TUNED_PATH,
+    network_config,
+    play,
+    score,
+)
 from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH, FIGURES
-from supply_chain_rl.policies.registry import PARAM_NAMES
+from supply_chain_rl.policies.basestock import chains
+from supply_chain_rl.policies.registry import PARAM_NAMES, make_policy
 from supply_chain_rl.sim.data import SimData, load_sim_data
+from supply_chain_rl.sim.env import SupplyChainEnv
+from supply_chain_rl.sim.state import Topology
 
 GRID_KEYS = {"basestock": "basestock_grid", "movavg": "movavg_z_grid"}
 MAX_EXTENSIONS = 10
@@ -60,6 +77,39 @@ def _summary(rows: Sequence[Mapping[str, Any]], objective: str) -> dict[str, flo
     return {"objective": float(obj.mean()), "objective_std": float(obj.std()), **mean}
 
 
+def chain_params(policy: str, pair: Pair, topo: Topology) -> dict[str, float]:
+    """``pair`` as the parameters of every chain (``m_store@W1``, ...; D-69 d)."""
+    ps, pw = PARAM_NAMES[policy]
+    return {f"{k}@{w}": v for w in chains(topo) for k, v in ((ps, pair[0]), (pw, pair[1]))}
+
+
+def chain_rows(
+    cfg: Config,
+    data: SimData,
+    policy: str,
+    params: Mapping[str, float],
+    seeds: Sequence[int],
+    split: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """Play ``policy`` on the whole network; metrics of each warehouse chain separately.
+
+    A chain's rows are the metrics of the log restricted to its warehouse and stores (D-69 d).
+    """
+    topo = Topology.from_config(cfg)
+    sim = cfg.section("sim")
+    pol = make_policy(policy, topo, data, sim["min_lead_time"], params)
+    env = SupplyChainEnv(cfg, data, "units")
+    out: dict[str, list[dict[str, Any]]] = {w: [] for w in chains(topo)}
+    for seed in seeds:
+        log = play(env, pol, seed, {"split": split, "decision_days": "all", "shocks": [],
+                                    "scenario_id": "control"})  # fmt: skip
+        for w in out:
+            nodes = {w, *topo.children[w]}
+            sub = log[log["node"].isin(nodes)]
+            out[w].append(run_metrics(sub, sim["cost_holding"], sim["cost_stockout"]))
+    return out
+
+
 # Worker processes rebuild the caller's config and load the data once, then score pairs.
 _W: dict[str, Any] = {}
 
@@ -70,12 +120,30 @@ def _init_worker(raw: dict[str, Any], n_days: int) -> None:
 
 
 def _score_pair(
-    args: tuple[str, Pair, Sequence[int], str, str],
-) -> tuple[Pair, dict[str, float]]:
-    policy, pair, seeds, split, objective = args
+    args: tuple[str, Pair, Sequence[int], str, str, bool],
+) -> tuple[Pair, Any]:
+    policy, pair, seeds, split, objective, per_chain = args
+    return pair, _pair_result(_W["cfg"], _W["data"], policy, pair, seeds, split, objective,
+                              per_chain)  # fmt: skip
+
+
+def _pair_result(
+    cfg: Config,
+    data: SimData,
+    policy: str,
+    pair: Pair,
+    seeds: Sequence[int],
+    split: str,
+    objective: str,
+    per_chain: bool,
+) -> Any:
+    """Summary of one pair: network-wide, or ``{chain: summary}`` when tuning per chain."""
+    if per_chain:
+        topo = Topology.from_config(cfg)
+        rows = chain_rows(cfg, data, policy, chain_params(policy, pair, topo), seeds, split)
+        return {w: _summary(r, objective) for w, r in rows.items()}
     ps, pw = PARAM_NAMES[policy]
-    rows = score(_W["cfg"], _W["data"], policy, {ps: pair[0], pw: pair[1]}, seeds, split)
-    return pair, _summary(rows, objective)
+    return _summary(score(cfg, data, policy, {ps: pair[0], pw: pair[1]}, seeds, split), objective)
 
 
 class Tuner:
@@ -96,7 +164,11 @@ class Tuner:
         workers: int = 1,
         objective: str = "total_cost",
         progress: Callable[[str], None] | None = None,
+        chain: str | None = None,
+        shared: dict[Pair, dict[str, dict[str, float]]] | None = None,
     ) -> None:
+        """``chain``: tune that warehouse chain's pair on its own cost (D-69 d); ``shared`` caches
+        the per-chain results of every played pair across the chains' tuners."""
         if objective not in OBJECTIVES:
             raise ValueError(f"objective must be one of {sorted(OBJECTIVES)}")
         self.cfg, self.data, self.policy, self.seeds, self.split = cfg, data, policy, seeds, split
@@ -105,26 +177,37 @@ class Tuner:
         self.extensions: list[str] = []
         self.progress = progress or (lambda _msg: None)
         self._pool: ProcessPoolExecutor | None = None
+        self.chain = chain
+        self.shared: dict[Pair, dict[str, dict[str, float]]] = {} if shared is None else shared
 
     def evaluate(self, pairs: Iterable[Pair]) -> None:
         todo = sorted({(_snap(s), _snap(w)) for s, w in pairs} - set(self.cache))
         if not todo:
             return
+        if self.chain is not None:
+            fresh = [p for p in todo if p not in self.shared]
+            for pair, res in self._results(fresh, per_chain=True):
+                self.shared[pair] = res
+            for p in todo:
+                self.cache[p] = self.shared[p][self.chain]
+            return
+        for pair, res in self._results(todo, per_chain=False):
+            self.cache[pair] = res
+
+    def _results(self, todo: Sequence[Pair], per_chain: bool) -> Iterable[tuple[Pair, Any]]:
+        if not todo:
+            return []
         if self.workers > 1:
             if self._pool is None:
                 self._pool = ProcessPoolExecutor(
                     self.workers, initializer=_init_worker,
                     initargs=(self.cfg.raw, self.cfg.n_days),
                 )  # fmt: skip
-            jobs = [(self.policy, p, list(self.seeds), self.split, self.objective) for p in todo]
-            for pair, res in self._pool.map(_score_pair, jobs):
-                self.cache[pair] = res
-        else:
-            ps, pw = PARAM_NAMES[self.policy]
-            for p in todo:
-                rows = score(self.cfg, self.data, self.policy, {ps: p[0], pw: p[1]},
-                             self.seeds, self.split)  # fmt: skip
-                self.cache[p] = _summary(rows, self.objective)
+            jobs = [(self.policy, p, list(self.seeds), self.split, self.objective, per_chain)
+                    for p in todo]  # fmt: skip
+            return list(self._pool.map(_score_pair, jobs))
+        return [(p, _pair_result(self.cfg, self.data, self.policy, p, self.seeds, self.split,
+                                 self.objective, per_chain)) for p in todo]  # fmt: skip
 
     def search(self, stores: Sequence[float], whs: Sequence[float], stage: str) -> Pair:
         """Best pair over ``stores`` x ``whs``, extending any edge the best pair sits on."""
@@ -134,7 +217,8 @@ class Tuner:
             self.evaluate((s, w) for s in sv for w in wv)
             best = min(((s, w) for s in sv for w in wv),
                        key=lambda p: (self.cache[p]["objective"], p))  # fmt: skip
-            self.progress(f"  {stage:<7} {len(sv)}x{len(wv)} pairs: best {best} "
+            tag = stage if self.chain is None else f"{self.chain}/{stage}"
+            self.progress(f"  {tag:<9} {len(sv)}x{len(wv)} pairs: best {best} "
                           f"({self.objective} {self.cache[best]['objective']:.0f})")  # fmt: skip
             grown = False
             for axis, vals in (("store", sv), ("warehouse", wv)):
@@ -250,16 +334,55 @@ def tune_all(
     objective = objective or base.get("tuning_objective", "total_cost")
     out: dict[str, Any] = {"split": "train", "seeds": seeds, "config_hash": cfg.hash(),
                            "objective": objective, "policies": {}}  # fmt: skip
+    per_chain = bool(base.get("tune_per_chain", False))
+    out["tune_per_chain"] = per_chain
     for p in policies:
         if progress:
-            progress(f"tuning {p}")
+            progress(f"tuning {p}" + (" per chain (D-69 d)" if per_chain else ""))
         t0 = time.perf_counter()
-        res = Tuner(
-            cfg, data, p, seeds, workers=workers, objective=objective, progress=progress
-        ).run(base[GRID_KEYS[p]], base.get("refine_step"))
+        if per_chain:
+            res = tune_per_chain(cfg, data, p, seeds, workers, objective, progress)
+        else:
+            res = Tuner(
+                cfg, data, p, seeds, workers=workers, objective=objective, progress=progress
+            ).run(base[GRID_KEYS[p]], base.get("refine_step"))
         res["seconds"] = round(time.perf_counter() - t0, 1)
         out["policies"][p] = res
     return out
+
+
+def tune_per_chain(
+    cfg: Config,
+    data: SimData,
+    policy: str,
+    seeds: Sequence[int],
+    workers: int,
+    objective: str,
+    progress: Callable[[str], None] | None,
+) -> dict[str, Any]:
+    """D-69 d: one joint search per warehouse chain on its own cost, then the check that the
+    network cost of the chosen set equals the sum of the chains' costs."""
+    base = cfg.section("baselines")
+    topo = Topology.from_config(cfg)
+    shared: dict[Pair, dict[str, dict[str, float]]] = {}
+    per: dict[str, Any] = {}
+    params: dict[str, float] = {}
+    for w in chains(topo):
+        r = Tuner(cfg, data, policy, seeds, workers=workers, objective=objective,
+                  progress=progress, chain=w, shared=shared).run(
+            base[GRID_KEYS[policy]], base.get("refine_step"))  # fmt: skip
+        per[w] = r
+        params.update({f"{k}@{w}": v for k, v in r["params"].items()})
+    rows = score(cfg, data, policy, params, seeds, "train")
+    net = _summary(rows, objective)
+    chain_sum = sum(per[w]["train_metrics"]["objective"] for w in per)
+    check = {"network_objective": net["objective"], "sum_of_chain_objectives": chain_sum,
+             "equal": bool(abs(net["objective"] - chain_sum) <= 1e-6 * max(1.0, chain_sum))}  # fmt: skip
+    if not check["equal"]:
+        raise RuntimeError(f"chains are not independent: {check} (D-69 d)")
+    return {"params": params, "objective": objective, "train_metrics": net,
+            "chains": per, "chain_sum_check": check,
+            "evaluations": len(shared), "grid_extensions": {w: per[w]["grid_extensions"] for w in per}}  # fmt: skip
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -299,7 +422,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.network != "prototype":
         suffix += f"_{args.network}"
     for p, r in res["policies"].items():
-        plot_tuning(p, r, FIGURES / f"tuning_{p}{suffix}.png")
+        for w, rc in (r.get("chains") or {}).items():
+            plot_tuning(p, rc, FIGURES / f"tuning_{p}{suffix}_{w}.png")
+        if "chains" not in r:
+            plot_tuning(p, r, FIGURES / f"tuning_{p}{suffix}.png")
         tm = r["train_metrics"]
         print(f"{p}: {r['params']}  train {r['objective']} {tm['objective']:.0f} "
               f"± {tm['objective_std']:.0f} (total {tm['total_cost']:.0f}, order change "

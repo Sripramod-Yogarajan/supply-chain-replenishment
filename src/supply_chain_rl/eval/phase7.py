@@ -31,7 +31,7 @@ import pandas as pd  # noqa: E402
 
 from supply_chain_rl.config import Config, load_config  # noqa: E402
 from supply_chain_rl.eval.runner import RESULTS  # noqa: E402
-from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH, ROOT  # noqa: E402
+from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH, ROOT, require_prototype  # noqa: E402
 
 OUT = RESULTS / "phase7"
 FIG = ROOT / "docs" / "figures" / "phase_7"
@@ -407,6 +407,7 @@ def fig_families(sup: pd.DataFrame, path: Path) -> None:
 
 
 def build(write: Callable[[str], None] = print) -> dict[str, Any]:
+    require_prototype("eval.phase7")  # D-67
     cfg = load_config(CONFIG_PATH, DERIVED_PATH)
     lab = labels(cfg)
     test, val = load_runs("test"), load_runs("val")
