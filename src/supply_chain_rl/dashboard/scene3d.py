@@ -27,6 +27,12 @@ HEIGHT = 222  # px, the small view on the first screen (the 2D map's height)
 HEIGHT_EXPANDED = 470  # px, "Expand 3D view"
 
 
+def frame_height(ctx: Context, expanded: bool) -> int:
+    """Height of the 3D frame: as on four nodes, taller when there are two or more chains."""
+    base = HEIGHT_EXPANDED if expanded else HEIGHT
+    return base if chain_layout(ctx) is None else (HEIGHT_EXPANDED if expanded else 360)
+
+
 def tower_days(cover: float) -> float:
     """Height of a tower in days of cover: the cover, capped at ``CAP_DAYS``."""
     return 0.0 if math.isnan(cover) else min(max(cover, 0.0), CAP_DAYS)
@@ -93,7 +99,9 @@ def scene_spec(
                 for d in r["dots"]
             ],
         })  # fmt: skip
+    spec_layout = chain_layout(ctx)
     return {
+        **({"layout": spec_layout, "home": HOME_CHAINS} if spec_layout else {}),
         "run": run, "day": t, "policy": replay.policy,
         "label": T.policy_label(replay.policy),
         "colour": T.policy_colour(replay.policy, known),
@@ -101,6 +109,38 @@ def scene_spec(
         "cap_days": CAP_DAYS, "ruler": list(RULER_DAYS),
         "palette": palette(), "nodes": nodes, "roads": roads,
     }  # fmt: skip
+
+
+# Two or more warehouse chains (eight-node network): one row per chain, front to back, and a
+# camera that sees both rows. The four-node scene keeps the browser's own layout (no "layout"
+# key), so it is drawn exactly as before.
+CHAIN_X = {"supplier": 0.0, "warehouse": 4.2, "store": 8.4}
+CHAIN_ROW = 4.6  # scene units between two chains
+STORE_SPREAD = 1.15  # scene units between the stores of one chain
+HOME_CHAINS = {
+    "wide": {"pos": [4.2, 10.5, 19.5], "target": [4.2, 0.6, 0.2]},
+    "narrow": {"pos": [17.0, 10.5, 15.5], "target": [4.0, 0.7, 0.0]},
+}
+
+
+def chain_layout(ctx: Context) -> dict[str, list[float]] | None:
+    """Scene positions ``[x, y, z]`` per node when there is more than one warehouse chain."""
+    whs = [n for n in ctx.nodes if ctx.types[n] == "warehouse"]
+    if len(whs) < 2:
+        return None
+    pos: dict[str, list[float]] = {}
+    for c, w in enumerate(whs):
+        z = (c - (len(whs) - 1) / 2) * CHAIN_ROW
+        pos[w] = [CHAIN_X["warehouse"], 0.0, z]
+        sup = ctx.parent[w]
+        if sup not in pos:
+            pos[sup] = [CHAIN_X["supplier"], 0.0, z]
+        kids = list(ctx.children[w])
+        for i, s in enumerate(kids):
+            k = 0.0 if len(kids) == 1 else i / (len(kids) - 1) - 0.5
+            # stores of a chain step back and to the right, so their labels do not stack
+            pos[s] = [CHAIN_X["store"] - 0.6 * k, 0.0, z + STORE_SPREAD * 2 * k]
+    return {n: [round(v, 4) for v in pos[n]] for n in ctx.nodes}
 
 
 def legend_html(ctx: Context) -> str:

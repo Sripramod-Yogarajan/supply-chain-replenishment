@@ -91,10 +91,25 @@ function layout(spec) {
   return pos;
 }
 
+// Positions from Python when the network has more than one chain (scene3d.chain_layout);
+// otherwise the layout above, as for the four-node network.
+function given(spec) {
+  const pos = {};
+  for (const [id, p] of Object.entries(spec.layout)) pos[id] = new THREE.Vector3(p[0], p[1], p[2]);
+  return pos;
+}
+
 function buildStatic(spec) {
   P = spec.palette;
   scene.background = new THREE.Color(P.panel);
-  const pos = layout(spec);
+  const pos = spec.layout ? given(spec) : layout(spec);
+  if (spec.home) { // a camera that sees every chain
+    for (const k of ["wide", "narrow"]) {
+      HOMES[k] = { pos: new THREE.Vector3(...spec.home[k].pos),
+                   target: new THREE.Vector3(...spec.home[k].target) };
+    }
+    if (shape) goHome(); // the frame was sized before the scene was built
+  }
   built = { pos, cap: spec.cap_days };
   for (const typ of ["supplier", "warehouse", "store"]) {
     const ps = spec.nodes.filter((n) => n.type === typ).map((n) => pos[n.id]);
@@ -110,11 +125,14 @@ function buildStatic(spec) {
     plate.receiveShadow = true;
     scene.add(plate);
     const t = label("tier");
-    t.inner.textContent = typ === "store" ? "Stores" : typ === "supplier" ? "Supplier" : "Warehouse";
+    const many = ps.length > 1 && typ !== "store";
+    t.inner.textContent = typ === "store" ? "Stores" : typ === "supplier"
+      ? (many ? "Suppliers" : "Supplier") : (many ? "Warehouses" : "Warehouse");
     t.position.set(X[typ], 0, (lo + hi) / 2 + depth / 2 + 0.3);
   }
   // ruler in days of cover on a back wall line, labels at the left end (clear of the stores)
-  const rz = -2.7, x0 = -1.0, x1 = X.store + 2.0;
+  const zs = Object.values(pos).map((p) => p.z);
+  const rz = spec.layout ? Math.min(...zs) - 1.6 : -2.7, x0 = -1.0, x1 = X.store + 2.0;
   const mat = new THREE.LineBasicMaterial({ color: P.grid });
   const capMat = new THREE.LineDashedMaterial({ color: P.faint, dashSize: 0.15, gapSize: 0.1 });
   for (const d of spec.ruler) {

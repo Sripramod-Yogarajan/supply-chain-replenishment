@@ -8,7 +8,8 @@ in days is printed in the node and a stockout gets its own ring and label.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import re
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 INK = "#1F2933"
@@ -28,6 +29,10 @@ POLICY_LABELS = {
     "graph_lstm": "Graph + LSTM (headline)",
     "graph_nolstm": "Graph, no LSTM",
     "ppo_shock": "PPO shock-trained (flat)",
+    # eight-node network (Phase 8): families of five training seeds, no headline seed (D-72)
+    "fam_flat": "Flat PPO family (5 seeds)",
+    "fam_graph_lstm": "Graph + LSTM family (5 seeds)",
+    "fam_graph_nolstm": "Graph, no LSTM family (5 seeds)",
 }
 POLICY_SHORT = {
     "warmup": "Warm-up",
@@ -37,6 +42,9 @@ POLICY_SHORT = {
     "graph_lstm": "Graph+LSTM",
     "graph_nolstm": "Graph",
     "ppo_shock": "PPO shock",
+    "fam_flat": "Flat fam.",
+    "fam_graph_lstm": "Graph+LSTM fam.",
+    "fam_graph_nolstm": "Graph fam.",
 }
 _POLICY_COLOURS = {
     "basestock": "#0072B2",  # blue
@@ -46,7 +54,14 @@ _POLICY_COLOURS = {
     "graph_lstm": "#009E73",  # bluish green: the Phase 7 headline (D-61)
     "graph_nolstm": "#56B4E9",  # sky blue
     "ppo_shock": "#D55E00",  # vermilion
+    "fam_flat": "#CC79A7",  # the flat model's colour
+    "fam_graph_lstm": "#009E73",
+    "fam_graph_nolstm": "#56B4E9",
 }
+# one training seed of an eight-node family, e.g. "graph_lstm_s2003" (D-70 g: seeds 2001-2005)
+NET8_MEMBER = re.compile(r"^(flat|graph_lstm|graph_nolstm)_s(20\d\d)$")
+_FAMILY_NAMES = {"flat": "Flat PPO", "graph_lstm": "Graph + LSTM", "graph_nolstm": "Graph, no LSTM"}
+_FAMILY_SHORT = {"flat": "Flat", "graph_lstm": "Graph+LSTM", "graph_nolstm": "Graph"}
 _SPARE = ("#000000", "#8B97A3", "#F0E442", "#44515E")  # supplementary rows (D-61)
 
 STATUS_COLOURS = {
@@ -70,13 +85,21 @@ FONT = "Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-seri
 
 
 def policy_label(name: str, short: bool = False) -> str:
+    m = NET8_MEMBER.match(name)
+    if m and name not in POLICY_LABELS:
+        fam = (_FAMILY_SHORT if short else _FAMILY_NAMES)[m.group(1)]
+        return f"{fam} s{m.group(2)}" if short else f"{fam} · seed {m.group(2)}"
     return (POLICY_SHORT if short else POLICY_LABELS).get(name, name)
 
 
 def policy_colour(name: str, known: Sequence[str] = ()) -> str:
-    """The policy's fixed colour; an unlisted registry name takes the next spare colour."""
+    """The policy's fixed colour; an unlisted registry name takes the next spare colour. An
+    eight-node training seed takes its family's colour."""
     if name in _POLICY_COLOURS:
         return _POLICY_COLOURS[name]
+    m = NET8_MEMBER.match(name)
+    if m:
+        return _POLICY_COLOURS[f"fam_{m.group(1)}"]
     others = [p for p in known if p not in _POLICY_COLOURS]
     i = others.index(name) if name in others else len(others)
     return _SPARE[i % len(_SPARE)]
@@ -166,48 +189,84 @@ PLOT_CONFIG: dict[str, Any] = {
 }  # fmt: skip
 MAP_CONFIG: dict[str, Any] = {**PLOT_CONFIG, "staticPlot": False, "scrollZoom": False}
 
-CSS = f"""
+
+# Page style sheet (Phase 8 readability fix). It never sets the page, sidebar or text colour:
+# those come from Streamlit's active theme (.streamlit/config.toml has a light and a dark theme).
+# Forcing a white background while Streamlit used light text made the sidebar labels pale and
+# almost invisible. Muted text, borders and card tints are mixed from the current text colour, so
+# they follow whichever theme is active. Only the two accent colours ("better" / "worse") depend on
+# the system setting, because no single colour has 4.5:1 contrast on both. Charts and the 3D scene
+# stay light panels with their own dark ink in both modes.
+_ACCENTS = {
+    "light": {"alert": ALERT, "good": GOOD},
+    "dark": {"alert": "#FF8F75", "good": "#7CC4EE"},
+}
+_MIX = {
+    "muted": "color-mix(in srgb, currentColor 74%, transparent)",
+    "faint": "color-mix(in srgb, currentColor 64%, transparent)",
+    "grid": "color-mix(in srgb, currentColor 16%, transparent)",
+    "panel": "color-mix(in srgb, currentColor 3%, transparent)",
+    "chip": "color-mix(in srgb, currentColor 12%, transparent)",
+    "warm": "color-mix(in srgb, currentColor 28%, transparent)",
+    "band": "color-mix(in srgb, currentColor 24%, transparent)",
+}
+
+
+def css(mode: str | None = None) -> str:
+    """The dashboard's style sheet. ``mode`` is accepted for callers that know Streamlit's theme;
+    the sheet itself works in both."""
+    c = {"page": "transparent", "side": "transparent", "ink": "inherit",
+         "alert": "var(--scd-alert)", "good": "var(--scd-good)", **_MIX}  # fmt: skip
+    light, dark = _ACCENTS["light"], _ACCENTS["dark"]
+    accents = (f":root {{ --scd-alert: {light['alert']}; --scd-good: {light['good']}; }}\n"
+               f"@media (prefers-color-scheme: dark) {{ :root {{ --scd-alert: {dark['alert']}; "
+               f"--scd-good: {dark['good']}; }} }}\n")  # fmt: skip
+    return "<style>\n" + accents + _sheet(c).split("<style>", 1)[1]
+
+
+def _sheet(c: Mapping[str, str]) -> str:
+    return f"""
 <style>
-.stApp {{ background: {PAGE}; }}
+.stApp {{ background: {c["page"]}; }}
 #MainMenu, footer, [data-testid="stDecoration"], [data-testid="stStatusWidget"],
 [data-testid="stToolbar"] {{ display: none !important; }}
 header[data-testid="stHeader"] {{ background: transparent; height: 0; }}
 .block-container {{ padding: 10px 20px 24px 20px !important; max-width: 1760px; }}
-section[data-testid="stSidebar"] {{ background: #FFFFFF; border-right: 1px solid {GRID}; }}
+section[data-testid="stSidebar"] {{ background: {c["side"]}; border-right: 1px solid {c["grid"]}; }}
 section[data-testid="stSidebar"] .block-container,
 section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {{ padding: 12px 14px; }}
 [data-testid="stSidebarHeader"] {{ display: none; }}
 [data-testid="stVerticalBlock"] {{ gap: 8px; }}
 [data-testid="stHorizontalBlock"] {{ gap: 8px; }}
-[data-testid="stPlotlyChart"] {{ background: {PANEL}; border: 1px solid {GRID};
+[data-testid="stPlotlyChart"] {{ background: {c["panel"]}; border: 1px solid {c["grid"]};
   border-radius: 6px; overflow: hidden; }}
-.stApp p.scd-title {{ font-size: 17px !important; font-weight: 650; color: {INK};
+.stApp p.scd-title {{ font-size: 17px !important; font-weight: 650; color: {c["ink"]};
   line-height: 1.25; margin: 0 !important; }}
-.stApp p.scd-sub {{ font-size: 12px !important; color: {MUTED}; margin: 1px 0 6px 0 !important;
+.stApp p.scd-sub {{ font-size: 12px !important; color: {c["muted"]}; margin: 1px 0 6px 0 !important;
   line-height: 1.35; }}
 .stApp p.scd-side-h {{ font-size: 10.5px !important; font-weight: 650; letter-spacing: .07em;
-  text-transform: uppercase; color: {MUTED}; margin: 8px 0 0 0 !important; }}
-.stApp .scd-day {{ font-size: 13px; color: {INK}; font-weight: 600; white-space: nowrap; }}
-.stApp .scd-day small {{ font-weight: 400; color: {MUTED}; font-size: 11.5px; }}
+  text-transform: uppercase; color: {c["muted"]}; margin: 8px 0 0 0 !important; }}
+.stApp .scd-day {{ font-size: 13px; color: {c["ink"]}; font-weight: 600; white-space: nowrap; }}
+.stApp .scd-day small {{ font-weight: 400; color: {c["muted"]}; font-size: 11.5px; }}
 .scd-chip {{ display: inline-block; padding: 1px 8px; border-radius: 9px; font-size: 11px;
   font-weight: 600; margin-left: 8px; }}
 .scd-chip.on {{ background: {ALERT}; color: #fff; }}
-.scd-chip.off {{ background: #E3E7EB; color: {MUTED}; }}
+.scd-chip.off {{ background: {c["chip"]}; color: {c["muted"]}; }}
 .scd-kpis {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }}
 [data-testid="stMarkdownContainer"]:has(.scd-kpis), [data-testid="stMarkdownContainer"]:has(.scd-legend),
 [data-testid="stMarkdownContainer"]:has(.scd-strip),
 [data-testid="stMarkdownContainer"]:has(.scd-side-h),
 [data-testid="stMarkdownContainer"]:has(.scd-note) {{ margin-bottom: 0 !important; }}
-.scd-kpi {{ background: {PANEL}; border: 1px solid {GRID}; border-radius: 6px; padding: 6px 10px; }}
+.scd-kpi {{ background: {c["panel"]}; border: 1px solid {c["grid"]}; border-radius: 6px; padding: 6px 10px; }}
 .scd-kpi .kt {{ margin: 0 0 2px 0; font-size: 10.5px; font-weight: 650; letter-spacing: .05em;
-  text-transform: uppercase; color: {INK}; white-space: nowrap; overflow: hidden;
+  text-transform: uppercase; color: {c["ink"]}; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }}
-.scd-kpi .kt span {{ text-transform: none; letter-spacing: 0; font-weight: 400; color: {MUTED}; }}
+.scd-kpi .kt span {{ text-transform: none; letter-spacing: 0; font-weight: 400; color: {c["muted"]}; }}
 .scd-kpi .row {{ display: flex; align-items: baseline; gap: 6px; font-size: 12px; line-height: 1.5;
   white-space: nowrap; }}
 .scd-kpi .dot {{ width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; align-self: center; }}
-.scd-kpi .name {{ color: {MUTED}; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }}
-.scd-kpi .val {{ color: {INK}; font-weight: 650; font-variant-numeric: tabular-nums; }}
+.scd-kpi .name {{ color: {c["muted"]}; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }}
+.scd-kpi .val {{ color: {c["ink"]}; font-weight: 650; font-variant-numeric: tabular-nums; }}
 .scd-kpi .sr {{ position: absolute; width: 1px; height: 1px; overflow: hidden;
   clip-path: inset(50%); white-space: nowrap; }}
 .scd-kpi .odo {{ display: inline-flex; height: 1.5em; line-height: 1.5em; vertical-align: top;
@@ -218,26 +277,26 @@ section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {{ padding
   animation: scd-roll 0.9s cubic-bezier(.2, .7, .2, 1) calc(var(--i) * 25ms) both; }}
 @keyframes scd-roll {{ from {{ transform: translateY(0); }} }}
 @media (prefers-reduced-motion: reduce) {{ .scd-kpi .od > span {{ animation: none; }} }}
-.scd-kpi .sd {{ color: {FAINT}; font-size: 11px; font-variant-numeric: tabular-nums; }}
+.scd-kpi .sd {{ color: {c["faint"]}; font-size: 11px; font-variant-numeric: tabular-nums; }}
 .scd-kpi .delta {{ font-size: 11px; font-weight: 600; min-width: 82px; text-align: right;
   font-variant-numeric: tabular-nums; }}
-.scd-kpi .better {{ color: {GOOD}; }} .scd-kpi .worse {{ color: {ALERT}; }}
-.scd-kpi .neutral {{ color: {MUTED}; font-weight: 400; }}
+.scd-kpi .better {{ color: {c["good"]}; }} .scd-kpi .worse {{ color: {c["alert"]}; }}
+.scd-kpi .neutral {{ color: {c["muted"]}; font-weight: 400; }}
 .scd-strip {{ position: relative; height: 14px; margin: -10px 16px 0 14px; }}
 .scd-strip .track {{ position: absolute; left: 0; right: 0; top: 5px; height: 4px;
-  background: #E3E7EB; border-radius: 2px; }}
-.scd-strip .warm {{ position: absolute; top: 5px; height: 4px; background: #C3CBD3;
+  background: {c["chip"]}; border-radius: 2px; }}
+.scd-strip .warm {{ position: absolute; top: 5px; height: 4px; background: {c["warm"]};
   border-radius: 2px 0 0 2px; }}
-.scd-strip .shock {{ position: absolute; top: 1px; height: 12px; background: rgba(31,41,51,.22);
+.scd-strip .shock {{ position: absolute; top: 1px; height: 12px; background: {c["band"]};
   border-radius: 2px; }}
-.scd-strip .now {{ position: absolute; top: 0; width: 2px; height: 14px; background: {INK}; }}
-.stApp .scd-legend {{ font-size: 11px; color: {MUTED}; line-height: 1.5; margin: -2px 0 2px 2px; }}
+.scd-strip .now {{ position: absolute; top: 0; width: 2px; height: 14px; background: {c["ink"]}; }}
+.stApp .scd-legend {{ font-size: 11px; color: {c["muted"]}; line-height: 1.5; margin: -2px 0 2px 2px; }}
 .scd-legend .sw {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%;
   margin: 0 4px 0 9px; vertical-align: -1px; border: 1px solid rgba(0,0,0,.2); }}
 .scd-legend .sw.sq {{ border-radius: 2px; }}
-.scd-legend .scd-hint {{ margin-left: 8px; cursor: help; color: {MUTED}; }}
+.scd-legend .scd-hint {{ margin-left: 8px; cursor: help; color: {c["muted"]}; }}
 iframe[title*="network3d"] {{ display: block; }}
-.stApp p.scd-note {{ font-size: 12px !important; color: {MUTED}; line-height: 1.5;
+.stApp p.scd-note {{ font-size: 12px !important; color: {c["muted"]}; line-height: 1.5;
   margin: 0 !important; }}
 .stApp p.scd-note code {{ font-size: 11.5px; }}
 div[data-testid="stSlider"] {{ padding: 0 8px; }}
@@ -246,5 +305,35 @@ div[data-testid="stSlider"] label {{ display: none; }}
 section[data-testid="stSidebar"] label p {{ font-size: 12.5px; }}
 section[data-testid="stSidebar"] div[role="radiogroup"] p {{ font-size: 13px; }}
 .stButton button {{ padding: 2px 8px; min-height: 32px; }}
+/* Readable text in both modes: labels, radio and checkbox entries, headings, tabs, expanders
+   take the page's ink colour (the pale-label fix); notes and sub-headings the muted colour. */
+.stApp, .stApp [data-testid="stWidgetLabel"] p, .stApp label, .stApp label p,
+.stApp [data-testid="stMarkdownContainer"] p, .stApp [role="radiogroup"] label p,
+.stApp [data-testid="stCheckbox"] label p, .stApp [data-testid="stExpander"] summary p,
+.stApp [data-testid="stExpander"] summary span, .stTabs [data-baseweb="tab"] p,
+section[data-testid="stSidebar"] p, section[data-testid="stSidebar"] span {{ color: {c["ink"]}; }}
+.stApp [data-testid="stExpander"] details {{ border-color: {c["grid"]}; background: {c["panel"]}; }}
+.stApp p.scd-sub, .stApp p.scd-side-h, .stApp p.scd-note, .stApp .scd-legend,
+.stApp .scd-legend .scd-hint {{ color: {c["muted"]}; }}
+.stApp p.scd-group {{ font-size: 11.5px !important; font-weight: 600; color: {c["muted"]};
+  margin: 6px 0 0 0 !important; }}
+.stApp .scd-note.scd-box {{ background: {c["panel"]}; border: 1px solid {c["grid"]};
+  border-left: 3px solid {c["muted"]}; border-radius: 4px; padding: 6px 10px; }}
+/* Selected segments, the selected tab and the slider's day value: the accent stays on the
+   button fill and the tab underline; the text takes the ink colour (accent text on a dark page
+   had too little contrast). */
+.stApp [data-testid="stButtonGroup"] button[aria-checked="true"],
+.stApp [data-testid="stButtonGroup"] button[aria-checked="true"] *,
+.stApp [data-testid="stTab"][aria-selected="true"],
+.stApp [data-testid="stTab"][aria-selected="true"] *,
+.stApp [data-testid="stSliderThumbValue"] p {{ color: inherit !important; font-weight: 650; }}
+.stApp [data-testid="stSliderThumbValue"] {{ color: inherit !important; }}
+.stApp p.scd-ref {{ font-size: 14px !important; margin: 4px 0 2px 2px !important; }}
+.stApp p.scd-ref .scd-dot {{ display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  margin-right: 8px; vertical-align: 0; }}
+.stApp p.scd-ref small {{ color: {c["muted"]}; font-size: 12px; }}
 </style>
 """
+
+
+CSS = css("light")

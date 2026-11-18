@@ -53,15 +53,32 @@ def view_range(t: int, first: int, last: int, width: int | None) -> tuple[float,
 # ------------------------------------------------------------------------------- the map
 
 
+CHAIN_GAP = 0.6  # extra store slots between two warehouse chains (eight-node network)
+
+
 def node_positions(ctx: Context) -> dict[str, tuple[float, float]]:
-    """Layered layout: suppliers left, warehouses in the middle, stores right."""
-    pos: dict[str, tuple[float, float]] = {}
-    for x, typ in ((0.0, "supplier"), (1.0, "warehouse"), (2.35, "store")):
-        group = [n for n in ctx.nodes if ctx.types[n] == typ]
-        for i, n in enumerate(group):
-            y = 0.5 if len(group) == 1 else 0.9 - 0.8 * i / (len(group) - 1)
-            pos[n] = (x, y)
-    return pos
+    """Layered layout: suppliers left, warehouses in the middle, stores right.
+
+    Stores are spaced evenly from top to bottom, with a gap between two warehouse chains; a
+    warehouse sits at the middle of its stores and a supplier at the middle of its warehouses,
+    so separate chains read as separate rows. With one warehouse this is the four-node layout.
+    """
+    stores = [n for n in ctx.nodes if ctx.types[n] == "store"]
+    slot, k = {}, 0.0
+    for i, n in enumerate(stores):
+        if i and ctx.parent[n] != ctx.parent[stores[i - 1]]:
+            k += CHAIN_GAP
+        slot[n] = k
+        k += 1.0
+    top = max(slot.values()) if slot else 0.0
+    pos: dict[str, tuple[float, float]] = {
+        n: (2.35, 0.5 if top == 0 else 0.9 - 0.8 * slot[n] / top) for n in stores
+    }
+    for x, typ in ((1.0, "warehouse"), (0.0, "supplier")):
+        for n in (m for m in ctx.nodes if ctx.types[m] == typ):
+            kids = [pos[c] for c in ctx.children[n] if c in pos]
+            pos[n] = (x, sum(y for _, y in kids) / len(kids) if kids else 0.5)
+    return {n: pos[n] for n in ctx.nodes}
 
 
 def map_state(replay: Replay, t: int, ctx: Context) -> dict[str, Any]:
@@ -162,8 +179,18 @@ def road_slots(replay: Replay, road: str, ctx: Context) -> int:
     return max(ctx.road_range[road][1], longest)
 
 
+MAP_HEIGHT = 222  # px, two stores (the four-node network)
+MAP_HEIGHT_PER_STORE = 80  # px more for every store beyond two (eight-node network: 382 px)
+
+
+def map_height(ctx: Context) -> int:
+    """Height of one 2D map: the four-node height, taller when there are more than two stores."""
+    n = sum(1 for t in ctx.types.values() if t == "store")
+    return MAP_HEIGHT + MAP_HEIGHT_PER_STORE * max(n - 2, 0)
+
+
 def network_map(
-    replay: Replay, t: int, ctx: Context, height: int = 222, n_maps: int = 2
+    replay: Replay, t: int, ctx: Context, height: int | None = None, n_maps: int = 2
 ) -> dict[str, Any]:
     """The network on day ``t`` as a Plotly figure dict: node fill by days of cover, a dark ring
     and a label on a stockout, road width by units shipped today, one marker per group of
@@ -176,8 +203,11 @@ def network_map(
     state = map_state(replay, t, ctx)
     pos = node_positions(ctx)
     longest = replay.ships.groupby("road")["lead_time"].max().to_dict()
+    height = map_height(ctx) if height is None else height
     dot = {1: 16, 2: 15, 3: 13}.get(n_maps, 11)
     node_size = {1: 46, 2: 44, 3: 40}.get(n_maps, 36)
+    if height > MAP_HEIGHT:  # more nodes on one map: a little smaller
+        node_size -= 4
     small = n_maps >= 3
     data: list[dict[str, Any]] = []
     notes: list[dict[str, Any]] = []

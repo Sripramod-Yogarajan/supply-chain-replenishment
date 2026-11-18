@@ -1,11 +1,19 @@
-# Theme of the simulation dashboard (Phase 4). Colours match supply_chain_rl/dashboard/theme.py.
+# Theme of the simulation dashboard (Phase 4; light and dark since Phase 8). Colours match
+# supply_chain_rl/dashboard/theme.py (PALETTES). With both [theme.light] and [theme.dark] the app
+# follows the system setting, and the page's own style sheet follows Streamlit's active theme.
 [theme]
-base = "light"
 primaryColor = "#0072B2"
+font = "sans serif"
+
+[theme.light]
 backgroundColor = "#F5F6F8"
 secondaryBackgroundColor = "#FFFFFF"
 textColor = "#1F2933"
-font = "sans serif"
+
+[theme.dark]
+backgroundColor = "#14181D"
+secondaryBackgroundColor = "#1E242B"
+textColor = "#E8ECF0"
 
 [client]
 toolbarMode = "minimal"

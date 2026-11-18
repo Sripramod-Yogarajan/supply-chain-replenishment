@@ -717,13 +717,19 @@ def test_app_renders_every_panel_and_updates_in_under_a_second() -> None:
     assert not at.exception and not at.error
     assert [t.label for t in at.tabs] == ["Day table", "Comparison", "Bullwhip", "Attention",
                                           "Event log", "Custom shock", "Export"]  # fmt: skip
-    assert len(at.radio[0].options) >= 5  # control and the four configured shocks
+    scenario = at.radio(key="scenario")
+    assert len(scenario.options) >= 5  # control and the four configured shocks
+    # Phase 8 default group: base-stock, moving average, ppo and graph_lstm (four maps)
+    shown = [
+        k for k in ("basestock", "movavg", "ppo", "graph_lstm") if at.session_state[f"pol_{k}"]
+    ]
+    assert shown == ["basestock", "movavg", "ppo", "graph_lstm"]
     html = " ".join(str(m.value) for m in at.markdown)
     csv = pd.read_csv(ROOT / "results" / "test" / "results.csv")
     row = csv[(csv["scenario"] == at.session_state.scenario) & (csv["policy"] == "basestock")]
     cost = float(row[row["metric"] == "total_cost"]["mean"].iloc[0])
     assert f"{cost:,.0f}" in html and "scd-kpis" in html and "Simulated day" in html
-    assert len(at.get("plotly_chart")) >= 5  # two maps, stock, orders, bullwhip
+    assert len(at.get("plotly_chart")) >= 7  # four maps, stock, orders, bullwhip
     assert len(at.dataframe) >= 4  # day table, comparison, bullwhip ratios, event log
     first, last = at.slider[0].min, at.slider[0].max
     times = []
@@ -734,7 +740,7 @@ def test_app_renders_every_panel_and_updates_in_under_a_second() -> None:
         assert not at.exception and at.session_state.cur_day == day
         assert at.session_state.last_update_ms < 1000
     assert max(times) < 1.0, times
-    at.radio[0].set_value("transit_delay").run()
+    at.radio(key="scenario").set_value("transit_delay").run()
     assert not at.exception and at.session_state.cur_day == 1747  # three days before the shock
     assert "shock active" not in " ".join(str(m.value) for m in at.markdown)
     at.slider[0].set_value(1752).run()
@@ -743,7 +749,7 @@ def test_app_renders_every_panel_and_updates_in_under_a_second() -> None:
     n_plots = len(at.get("plotly_chart"))
     at.session_state.net_view = "3D scene"
     at.run()
-    assert not at.exception and len(at.get("plotly_chart")) == n_plots - 2
+    assert not at.exception and len(at.get("plotly_chart")) == n_plots - len(shown)
     assert "Height = days of cover" in " ".join(str(m.value) for m in at.markdown)
     at.session_state.expand3d = True
     at.run()

@@ -52,6 +52,15 @@ CURATED_P7 = {
     "dashboard_p7_tab_attention.png": "12_p7_attention_panel.png",
     "dashboard_p7_tab_bullwhip.png": "13_p7_bullwhip_chart.png",
 }
+# Phase 8: readable sidebar in both modes, and the eight-node network
+CURATED_P8 = {
+    "dashboard_p8_sidebar_light.png": "14_p8_sidebar_light.png",
+    "dashboard_p8_sidebar_dark.png": "15_p8_sidebar_dark.png",
+    "dashboard_p8_2d_map_net8.png": "16_p8_2d_map_eight_nodes.png",
+    "dashboard_p8_3d_scene_net8.png": "17_p8_3d_scene_eight_nodes.png",
+    "dashboard_p8_tab_comparison_net8.png": "18_p8_comparison_table_eight_nodes.png",
+    "dashboard_p8_tab_bullwhip_net8.png": "19_p8_bullwhip_tab_eight_nodes.png",
+}
 SCENE_FRAMES = 'iframe[title*="network3d"]'
 
 VIEWPORT = {"width": 1366, "height": 768}
@@ -283,6 +292,44 @@ def capture_phase7(url: str, out_dir: Path, day: int = 1755) -> list[str]:
     return files
 
 
+def capture_phase8(url: str, out_dir: Path, day: int = 1755) -> list[str]:
+    """Phase 8: the four-node first screen in light and dark mode (sidebar readability), and the
+    eight-node network (transit delay) as 2D map, expanded 3D scene, comparison and bullwhip."""
+    from playwright.sync_api import sync_playwright
+
+    files = []
+    big = {"width": 1366, "height": 900}
+    with sync_playwright() as pw:
+        browser = _launch(pw)
+        for scheme in ("light", "dark"):
+            page = browser.new_page(viewport=big, device_scale_factor=1,  # type: ignore[arg-type]
+                                    color_scheme=scheme)  # fmt: skip
+            page.goto(f"{url}/?net=prototype&scenario=transit_delay&day={day}")
+            _wait_ready(page, 6)
+            name = f"dashboard_p8_sidebar_{scheme}.png"
+            page.screenshot(path=str(out_dir / name))
+            files.append(name)
+            page.close()
+        page = browser.new_page(viewport=big, device_scale_factor=1)  # type: ignore[arg-type]
+        q = f"{url}/?net=net8&scenario=transit_delay&day={day}"
+        page.goto(q)
+        _wait_ready(page, 6)
+        page.screenshot(path=str(out_dir / "dashboard_p8_2d_map_net8.png"))
+        files.append("dashboard_p8_2d_map_net8.png")
+        page.goto(f"{q}&view=3d&expand=1")
+        _wait_ready(page, 2, scenes=2)
+        page.screenshot(path=str(out_dir / "dashboard_p8_3d_scene_net8.png"))
+        files.append("dashboard_p8_3d_scene_net8.png")
+        page.goto(q)
+        _wait_ready(page, 6)
+        for tab in ("Comparison", "Bullwhip"):
+            name = f"dashboard_p8_tab_{tab.lower()}_net8.png"
+            _tab_shot(page, tab, out_dir / name)
+            files.append(name)
+        browser.close()
+    return files
+
+
 def four_policies(url: str, sid: str, day: int) -> dict[str, Any]:
     """Layout and 3D step timing with four policies (placeholder ``ppo``); no image is kept."""
     from playwright.sync_api import sync_playwright
@@ -379,6 +426,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--out-dir", type=Path, default=FIGURES)
     ap.add_argument("--docs-dir", type=Path, default=DOCS, help="tracked copies (D-46)")
     ap.add_argument("--no-four", action="store_true", help="skip the four-policy check")
+    ap.add_argument("--phase8", action="store_true",
+                    help="only the Phase 8 images (readable theme, eight-node network)")  # fmt: skip
     ap.add_argument(
         "--phase7",
         action="store_true",
@@ -391,6 +440,21 @@ def main(argv: list[str] | None = None) -> None:
 
     cfg = load_config(CONFIG_PATH, DERIVED_PATH)
     sids = ["control", *(cfg.raw.get("scenarios", {}).get("shocks") or {})]
+    if args.phase8:
+        proc = None if args.url else _serve(args.port)
+        try:
+            files = capture_phase8((args.url or f"http://localhost:{args.port}").rstrip("/"),
+                                   args.out_dir)  # fmt: skip
+        finally:
+            if proc is not None:
+                proc.terminate()
+        args.docs_dir.mkdir(parents=True, exist_ok=True)
+        for src, dst in CURATED_P8.items():
+            shutil.copy2(args.out_dir / src, args.docs_dir / dst)
+        for name in files:
+            print(f"saved {args.out_dir / name}")
+        print(f"copied {len(CURATED_P8)} images to {args.docs_dir}")
+        return
     if args.phase7:
         proc = None if args.url else _serve(args.port)
         try:
