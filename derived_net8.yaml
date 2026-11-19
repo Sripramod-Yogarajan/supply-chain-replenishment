@@ -1,0 +1,8 @@
+# Derived dataset facts: results computed from the data, NOT chosen settings
+# (those are in config.yaml). Written by the Phase 1 build commands; see DECISIONS.md D-2/D-3.
+data:
+  n_days: 1941
+  item_id: FOODS_3_586
+  first_day: 1
+  min_nonzero_share_used: 0.9
+  item_rule: fixed_item (D-68)

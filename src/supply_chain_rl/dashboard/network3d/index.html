@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Network, 3D</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #FFFFFF; overflow: hidden;
+    font-family: Inter, 'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif;
+    color: #1F2933; }
+  #root { position: relative; width: 100%; height: 222px; box-sizing: border-box;
+    border: 1px solid #E7EAEE; border-radius: 6px; overflow: hidden; background: #FFFFFF; }
+  canvas { display: block; }
+  .labels { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 2; }
+  #title { position: absolute; left: 4px; top: 3px; max-width: calc(100% - 100px); z-index: 3; font-size: 12.5px;
+    background: rgba(255, 255, 255, .9); padding: 2px 5px; border-radius: 4px;
+    box-sizing: border-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+  #reset { position: absolute; right: 6px; top: 5px; z-index: 3; font: inherit; font-size: 11px;
+    border: 1px solid #D5DAE0; background: #FFFFFF; color: #44515E; border-radius: 4px;
+    padding: 2px 7px; cursor: pointer; }
+  #reset:hover { border-color: #8B97A3; color: #1F2933; }
+  #tip { position: absolute; display: none; z-index: 10; pointer-events: none; background: #FFFFFF;
+    border: 1px solid #C9D0D8; border-radius: 4px; padding: 5px 8px; font-size: 11px;
+    line-height: 1.45; box-shadow: 0 2px 8px rgba(31, 41, 51, .16); max-width: 330px; }
+  .up { transform: translateY(-50%); }
+  .left { transform: translateX(-50%); }
+  .node { font-size: 10.5px; text-align: center; line-height: 1.15; white-space: nowrap;
+    background: rgba(255, 255, 255, .86); padding: 1px 4px; border-radius: 3px; }
+  .muted { color: #66727F; }
+  .mark { font-size: 10px; font-weight: 650; color: #B5422C; }
+  .dot { font-size: 8.5px; font-weight: 650; color: #44515E; }
+  .dot.late { color: #1F2933; }
+  .tick { font-size: 9px; color: #9AA5B1; white-space: nowrap; }
+  .tier { font-size: 9px; color: #66727F; letter-spacing: .06em; text-transform: uppercase; }
+  .big .node { font-size: 14px; } .big .mark { font-size: 12.5px; } .big .dot { font-size: 11px; }
+  .big .tick, .big .tier { font-size: 11px; } .big #title { font-size: 14px; }
+  .tiny .dot { display: none; }
+  .chip { margin-left: 8px; font-size: 10.5px; color: #B5422C; font-weight: 600;
+    border: 1px solid #B5422C; border-radius: 3px; padding: 0 4px; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/" } }
+</script>
+</head>
+<body>
+<div id="root">
+  <div id="title"></div>
+  <button id="reset" type="button" title="Back to the default camera">⟲ reset view</button>
+  <div id="tip"></div>
+</div>
+<script type="module" src="./network3d.js"></script>
+</body>
+</html>

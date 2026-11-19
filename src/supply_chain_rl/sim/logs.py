@@ -24,6 +24,17 @@ INT_COLUMNS = (
 )  # fmt: skip
 FLOAT_COLUMNS = ("cost_holding", "cost_stockout", "cost_order_change", "reward_day")
 
+# Shipments table (DECISIONS D-32 c, D-40): one row per shipment of a run. Logging only: it is
+# what rules R4 and R10 (plus S1) already did, written down. ``t`` is the day the shipment left,
+# ``arrival`` the day R3 delivers it, ``lead_time`` the R10 draw plus any S1 delay. Rows with
+# ``initial`` = 1 are the configured start-up pipeline (tag C): they were never shipped by a rule,
+# so ``t`` is the day before the run and ``lead_time`` is only ``arrival - t``.
+SHIPMENT_COLUMNS = (
+    "run_id", "policy", "seed", "scenario_id", "t", "road", "dest", "qty", "lead_time", "arrival",
+    "initial",
+)  # fmt: skip
+SHIPMENT_INT_COLUMNS = ("seed", "t", "qty", "lead_time", "arrival", "initial")
+
 
 def to_frame(rows: Sequence[dict[str, Any]]) -> pd.DataFrame:
     """Rows -> DataFrame with the schema's columns and dtypes (raises if a column is missing)."""
@@ -36,6 +47,14 @@ def to_frame(rows: Sequence[dict[str, Any]]) -> pd.DataFrame:
         df[c] = df[c].astype("int64")
     for c in FLOAT_COLUMNS:
         df[c] = df[c].astype("float64")
+    return df
+
+
+def shipments_to_frame(rows: Sequence[dict[str, Any]]) -> pd.DataFrame:
+    """Shipment rows -> DataFrame with the shipments schema (empty frame if there are none)."""
+    df = pd.DataFrame(list(rows), columns=list(SHIPMENT_COLUMNS))
+    for c in SHIPMENT_INT_COLUMNS:
+        df[c] = df[c].astype("int64")
     return df
 
 

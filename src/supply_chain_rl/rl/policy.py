@@ -1,0 +1,101 @@
+"""The trained PPO policy behind the registry name ``ppo`` (DECISIONS D-51).
+
+It is frozen and orders the actor's **mean** action, without exploration noise (manual 7.5). It
+reads the observation, so the harness plays it in ``fraction`` mode; R1 turns the fraction into
+units exactly as for training.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import torch
+
+from supply_chain_rl.rl.encoder import GraphActorCritic, graph_from_spec
+from supply_chain_rl.rl.flat_ppo import ActorCritic
+from supply_chain_rl.sim.state import Notebook, Topology
+
+Model = ActorCritic | GraphActorCritic
+
+
+def model_record(model: Model, ordering: Sequence[str], hidden: Sequence[int]) -> dict[str, Any]:
+    """What a checkpoint needs to rebuild the network (``kind`` flat or graph; D-55)."""
+    rec: dict[str, Any] = {
+        "kind": "graph" if isinstance(model, GraphActorCritic) else "flat",
+        "model_state": model.state_dict(),
+        "obs_dim": model.obs_dim,
+        "n_actions": model.n_actions,
+        "hidden": list(hidden),
+        "ordering": list(ordering),
+    }
+    if isinstance(model, GraphActorCritic):
+        rec["spec"] = model.spec
+    return rec
+
+
+def model_from_record(rec: Mapping[str, Any]) -> Model:
+    """Rebuild a model; Phase 5 checkpoints have no ``kind`` and are flat."""
+    model: Model
+    if rec.get("kind", "flat") == "graph":
+        model = graph_from_spec(rec["spec"])
+    else:
+        model = ActorCritic(int(rec["obs_dim"]), int(rec["n_actions"]), rec["hidden"], 1 / 3, 0.1)
+    model.load_state_dict(rec["model_state"])
+    model.eval()
+    return model
+
+
+@dataclass
+class PPOPolicy:
+    """Frozen actor; ``act`` returns the mean fraction of the cap for each ordering node."""
+
+    model: Model
+    ordering: tuple[str, ...]
+    name: str = "ppo"
+    uses_observation: bool = True
+    meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 7: a graph model can record today's attention weights per layer on every act() call
+    # (one entry per decision day, each a list of (E + N,) arrays); the actions are unchanged.
+    record_attention: bool = False
+    attention_log: list[list[np.ndarray]] = field(default_factory=list)
+
+    @property
+    def has_attention(self) -> bool:
+        return isinstance(self.model, GraphActorCritic)
+
+    def act(self, obs: Mapping[str, np.ndarray]) -> np.ndarray:
+        with torch.no_grad():
+            x = torch.as_tensor(self.model.encode(obs)).unsqueeze(0)
+            if self.record_attention and isinstance(self.model, GraphActorCritic):
+                mu, attn = self.model.mean_attention(x)
+                self.attention_log.append([a[0, -1].numpy().copy() for a in attn])
+            else:
+                mu = self.model.mean(x)
+            out: np.ndarray = mu.squeeze(0).numpy().astype(np.float64)
+        return out
+
+    def orders(self, topo: Topology, nb: Notebook) -> dict[str, float]:
+        raise TypeError("ppo reads the observation; play it with act() in fraction mode")
+
+    def params(self) -> dict[str, float]:
+        return {}
+
+
+def load_ppo(path: Path, topo: Topology) -> PPOPolicy:
+    """Load a saved checkpoint (``best.pt`` or ``rl.selected_checkpoint``) for ``topo``."""
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"{path} not found: train with `python -m supply_chain_rl.rl.train` and select with "
+            "`python -m supply_chain_rl.rl.report`"
+        )
+    rec = torch.load(path, map_location="cpu", weights_only=True)
+    if tuple(rec["ordering"]) != topo.ordering:
+        raise ValueError(
+            f"checkpoint {path} orders for {rec['ordering']}, the network has {topo.ordering}"
+        )
+    meta = {k: v for k, v in rec.items() if k not in ("model_state", "optimizer_state")}
+    return PPOPolicy(model_from_record(rec), topo.ordering, meta=meta)

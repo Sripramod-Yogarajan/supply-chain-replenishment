@@ -7,14 +7,18 @@ name = "supply-chain-rl"
 version = "0.0.1"
 description = "Spatio-temporal graph RL for bullwhip-aware supply chain replenishment (simulation prototype)"
 requires-python = ">=3.11,<3.12"
-dependencies = ["numpy", "pyyaml", "pandas", "pyarrow", "networkx", "matplotlib", "plotly", "gymnasium"]
+dependencies = ["numpy", "pyyaml", "pandas", "pyarrow", "networkx", "matplotlib", "plotly", "gymnasium", "streamlit", "torch"]
 
 [project.optional-dependencies]
 # Libraries for later phases are added to the matching extra when that phase starts.
-dev = ["pytest", "ruff", "mypy", "types-PyYAML", "pandas-stubs", "types-networkx", "pip-tools"]
+dev = ["pytest", "ruff", "mypy", "types-PyYAML", "pandas-stubs", "types-networkx", "pip-tools", "playwright"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# the 3D network component's page and its saved copy of three.js (D-43)
+"supply_chain_rl.dashboard" = ["network3d/*.html", "network3d/*.js", "network3d/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -43,5 +47,5 @@ follow_untyped_imports = true
 # produces noise, so these specific codes are disabled there; config, seeding and the core M5
 # logic stay fully strict. See DECISIONS.md D-9.
 [[tool.mypy.overrides]]
-module = ["supply_chain_rl.graph.*", "supply_chain_rl.data.build", "supply_chain_rl.data.dataco", "tests.test_graph"]
+module = ["supply_chain_rl.graph.*", "supply_chain_rl.data.build", "supply_chain_rl.data.dataco", "tests.test_graph", "supply_chain_rl.dashboard.derive", "supply_chain_rl.dashboard.figures", "tests.test_dashboard"]
 disable_error_code = ["union-attr", "index", "arg-type", "call-overload", "operator", "attr-defined", "no-untyped-call"]

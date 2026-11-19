@@ -91,9 +91,15 @@ def main() -> None:
             assert state_ids[str(n.m5_store)] == n.state, f"state mismatch for {n.id}"
     print("state_id matches the store-id prefix (A2):", state_ids)
 
-    choice = m5.choose_item(
-        sales, prices, calendar, stores, cfg.section("data")["min_nonzero_share"], n_days
-    )
+    fixed = cfg.section("data").get("fixed_item")
+    if fixed:  # eight-node network: the item is kept, not re-chosen (DECISIONS D-68)
+        choice = m5.fixed_item(sales, prices, calendar, stores, str(fixed), n_days,
+                               cfg.section("data")["min_nonzero_share"])  # fmt: skip
+        print(f"item fixed by the config (D-68): {fixed}")
+    else:
+        choice = m5.choose_item(
+            sales, prices, calendar, stores, cfg.section("data")["min_nonzero_share"], n_days
+        )
     item, first = choice.item_id, choice.first_day
     print(f"chosen item {item}, first_day {first}, threshold used {choice.min_nonzero_share}")
 
@@ -116,6 +122,7 @@ def main() -> None:
         "item_id": item, "first_day": first,
         "min_nonzero_share_used": choice.min_nonzero_share,
         "n_days": n_days,
+        **({"item_rule": "fixed_item (D-68)"} if fixed else {}),
     }})  # fmt: skip
 
     zero = {s: float((demand[s] == 0).mean()) for s in store_of_node}

@@ -148,6 +148,13 @@ class SupplyChainEnv(gym.Env[dict[str, np.ndarray], np.ndarray]):
         )
         self.log_rows: list[dict[str, Any]] = []
         self.shipments: list[dict[str, Any]] = []
+        # start-up pipeline (tag C), kept apart from the shipments made by the rules (D-40)
+        self.initial_shipments: list[dict[str, Any]] = [
+            {"t": start - 1, "road": self.topo.road[n], "dest": n, "qty": q,
+             "lead_time": due - (start - 1), "arrival": due, "initial": 1}
+            for n in self.topo.stocking
+            for due, q in self.nb.pipeline[n]
+        ]  # fmt: skip
         self.state_tables: dict[int, list[dict[str, Any]]] = {}
         self._buffer: deque[np.ndarray] = deque(maxlen=self.window)
         self.decisions_done = 0
@@ -207,6 +214,44 @@ class SupplyChainEnv(gym.Env[dict[str, np.ndarray], np.ndarray]):
         self.state_tables[self.nb.t] = rows
         self._buffer.append(node_features(rows, self.data))
         self._edge_attr = edge_features(self.data, self.shocks, self.nb.t)
+
+    def add_training_shocks(self, records: Sequence[Mapping[str, Any]]) -> None:
+        """Add hidden shocks after ``reset`` (D-62, shock-trained PPO; training episodes only).
+
+        Every shock must start after today (the observation of today is already built) and lie
+        on training days, so nothing already seen changes and no test day is ever shocked.
+        """
+        if self.nb is None or self.split != "train":
+            raise RuntimeError("training shocks are added to a reset training episode only")
+        stores = [n for n in self.topo.nodes if self.topo.types[n] == "store"]
+        suppliers = [n for n in self.topo.nodes if self.topo.types[n] == "supplier"]
+        hi = self.cfg.splits["train"][1]
+        for rec in records:
+            shock = sh.parse_shock(rec, self.edge_id, stores, suppliers)
+            if shock.start_day <= self.nb.t or shock.end_day > hi or shock.announced:
+                raise ValueError(f"training shock {shock.id} must be hidden, start after day "
+                                 f"{self.nb.t} and end by day {hi}")  # fmt: skip
+            self.shocks.append(shock)
+
+    def peek_observation(self) -> dict[str, np.ndarray]:
+        """The observation of the start of the current day, without storing anything.
+
+        After the last step of a truncated episode the environment does not observe again, but
+        PPO needs the next state's value to bootstrap the return (DECISIONS D-35 b, D-51). This
+        builds that observation from the same functions as :meth:`_observe` and leaves the
+        notebook, the history buffer, the log and the day tables untouched. No rule runs.
+        """
+        if self.nb is None:
+            raise RuntimeError("reset() first")
+        rows = state_rows(self.topo, self.nb, self.data, self.shocks, self.window)
+        buf = deque(self._buffer, maxlen=self.window)
+        if self._done:  # the last step did not observe: today's graph is new
+            buf.append(node_features(rows, self.data))
+        return {
+            "node_features": np.stack(list(buf)).astype(np.float32),
+            "edge_index": self.data.skeleton.edge_index.astype(np.int64),
+            "edge_attr": edge_features(self.data, self.shocks, self.nb.t),
+        }
 
     def _obs(self) -> dict[str, np.ndarray]:
         return {
@@ -334,6 +379,16 @@ class SupplyChainEnv(gym.Env[dict[str, np.ndarray], np.ndarray]):
     def log_frame(self) -> pd.DataFrame:
         """The run log so far (manual 7.7 schema plus ``order_capped``)."""
         return logs.to_frame(self.log_rows)
+
+    def shipments_frame(self) -> pd.DataFrame:
+        """Every shipment of the run so far, start-up pipeline first (D-32 c; logging only)."""
+        rows = [
+            {**self.labels, "dest": s["road"].split("->")[1], "initial": 0, **s}
+            for s in self.shipments
+        ]
+        return logs.shipments_to_frame(
+            [{**self.labels, **s} for s in self.initial_shipments] + rows
+        )
 
     @property
     def notebook(self) -> Notebook:

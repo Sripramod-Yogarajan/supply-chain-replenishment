@@ -87,13 +87,24 @@ class SimData:
 
 
 def load_sim_data(cfg: Config, processed: Path = PROCESSED) -> SimData:
-    """Read the Phase 1 tables and statistics from ``data/processed``."""
+    """Read the Phase 1 tables and statistics from ``data/processed``.
+
+    ``stats.json`` holds ``avg_d`` and ``price_mean`` of the configured network. For a network
+    with other nodes (the Phase 5 smoke network S1, W1, St1; DECISIONS D-26) they are computed
+    with the same Phase 1 function on training days, so W1's ``avg_d`` is the sum of *its* stores.
+    """
     stats = json.loads((processed / "stats.json").read_text(encoding="utf-8"))
     pmf = json.loads((processed / "leadtime_pmf.json").read_text(encoding="utf-8"))
+    demand = pd.read_parquet(processed / "demand.parquet")
+    price = pd.read_parquet(processed / "price.parquet")
+    if {n.id for n in cfg.nodes} != set(stats["avg_d"]):
+        from supply_chain_rl.data.m5 import compute_stats
+
+        stats = compute_stats(demand, price, list(cfg.raw["network"]["nodes"]), cfg.splits["train"])
     return SimData.from_tables(
         cfg,
-        demand=pd.read_parquet(processed / "demand.parquet"),
-        price=pd.read_parquet(processed / "price.parquet"),
+        demand=demand,
+        price=price,
         calendar=pd.read_parquet(processed / "calendar.parquet"),
         avg_d=stats["avg_d"],
         price_mean=stats["price_mean"],

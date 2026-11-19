@@ -104,10 +104,11 @@ You can't build the "smart computer" first. It needs somewhere to practise, the 
 | 1 | Prepare the real data (sales, prices, delivery times) | ✅ Done |
 | 2 | Build the simulated supply chain (the practice "game") | ✅ Done |
 | 3 | Build simple ordering rules and a scoreboard (the yardstick) | ✅ Done |
-| 4 | Build a dashboard to watch the game visually | ⏭️ Next |
-| 5 | Train the first learning computer (simple version) | ⏳ Later |
-| 6 | Give it the "network map + 7-day history" view (the special part) | ⏳ Later |
-| 7–8 | Put everything together, run the final experiments, write up | ⏳ Later |
+| 4 | Build a dashboard to watch the game visually | ✅ Done |
+| 5 | Train the first learning computer (simple version) | ✅ Done |
+| 6 | Give it the "network map + 7-day history" view (the special part) | ✅ Done |
+| 7 | Put everything together and run the one final test | ✅ Done |
+| 8 | Scale up to a bigger network and run more experiments | ⏳ Optional, not started |
 
 The rest of this answer goes phase by phase. For each one: what we did, why, which folder and files hold it, and what each term means.
 
@@ -152,14 +153,15 @@ supply-chain-replenishment/            ← the project folder
 |------|------------|
 | `build_manual.md` | The project's instruction book: every rule, number and phase. We follow it, but correct it (and mark the correction) where the real data proved it wrong. |
 | `pyproject.toml` | The list of software libraries the project needs (e.g. `pandas` for tables, `gymnasium` for the game interface). |
-| `requirements.lock` | An exact, frozen list of library versions. We deliberately postponed updating it until the end of the project. |
+| `requirements.lock` | An exact, frozen list of library versions. We deliberately postponed updating it until the end of the project, so for now the project is installed from `pyproject.toml` (see the README). |
+| `CLAUDE.md` | The standing rules every work session follows (one phase at a time, never tune on test days, report results as found). |
 | `config.yaml` | Every setting we chose, in one place: which stores, how long deliveries take, costs, and so on. Change a number here and the whole project follows it. |
 | `derived.yaml` | Facts **measured** from the data, not chosen by us, e.g. "the data has 1,941 days" and "the product is FOODS_3_586". Kept separate so nobody mistakes a measured fact for a tunable setting. |
 | `src/.../config.py` | Code that reads `config.yaml` and checks it makes sense (e.g. the date ranges don't overlap). |
 | `src/.../seeding.py` | Controls randomness (see *seed* below). |
 | `src/.../paths.py` | One list of where the folders are, so no file has to guess. |
-| `DECISIONS.md` | A record of every decision we made and why (D-1 to D-22). |
-| `ASSUMPTIONS.md` | A record of everything we had to assume without proof (A1 to A20). |
+| `DECISIONS.md` | A record of every decision we made and why (D-1 to D-38). |
+| `ASSUMPTIONS.md` | A record of everything we had to assume without proof (A1 to A24). |
 | `README.md` | Short "how to install and run" instructions. |
 | `.gitignore` | Tells git (the version-history tool) which files not to save, e.g. the large datasets. |
 
@@ -256,7 +258,7 @@ The manual numbers these rules **R1 to R12** (R11 and R12 are the Phase 3 baseli
 - **Shock:** a surprise event used to test robustness:
   - *transit delay:* deliveries on a route take 3 extra days;
   - *demand spike:* customers suddenly buy 1.5× more;
-  - *price discount:* the price drops, so customers buy more (the size of that uplift, `u`, is still to be decided).
+  - *price discount:* the price drops, so customers buy more. The size of that uplift, `u`, is 0.2 (20% more sales for a 20% discount), estimated from real price cuts of other food items in M5; because that estimate is uncertain, 0.5 is run as a second case.
 - **Costs** (how a day is judged):
 
   | Cost | Rate | Meaning |
@@ -391,13 +393,73 @@ So `bullwhip_chain_mean` = "the average whole-chain bullwhip over 20 runs", and 
 - This holds under changed settings too (the sensitivity check).
 - **Target for the learning computer:** match about 5,330 cost at about 97.7% fill rate, with bullwhip below 3.3.
 
+### What the reproduction added (`reports/reproduction.md`)
+
+All of Phases 0 to 3 were re-run from the raw files and every number came out the same. The same three policies were also scored on the **validation** days, which the learning computer will use for its "mock exam":
+
+| Validation days | Naive | Base-stock | Moving-average |
+|---|------:|-----------:|---------------:|
+| Total cost | 10,861 | 5,157 | 5,394 |
+| Fill rate | 99.5% | 90.0% | 92.6% |
+| Chain bullwhip | 1.0 | 6.4 | 19.6 |
+
+- Customers bought about 8% **more** than the training average on the validation days and about 8% **less** on the test days. Base-stock's fixed target is therefore too low on validation days (worse service than moving-average) and too high on test days (better service). Which rule serves customers better depends on the period; base-stock is cheaper or equal in both, and always calmer.
+- **The mock-exam pass mark (Gate G2, decision D-25):** on validation days the learning computer must cost at most 5,673 (10% above base-stock) and fill at least 91.6% of demand (one point below moving-average).
+- In the simulation both delivery routes behave the same (2 to 6 days, each equally likely). The "80% late" figure for the warehouse-to-store route is a label from the shipping data and does not make that route slower here (a recorded limitation, A22).
+
+---
+
+## Phases 4 to 6 in brief
+
+- **Phase 4, the dashboard (`app/dashboard.py`):** replays any run day by day: a map or a 3D scene of the network, stock and order charts, the scoreboard, the bullwhip chart and an event log.
+- **Phase 5, the simple learner (`ppo`):** PPO reading the network as a flat list of numbers. It passed its mock exam (Gate G2) on the validation days. In this guide it is called **`ppo`**.
+- **Phase 6, the special version:** the same learner reading the network as a map (GAT) with or without the 7-day memory (LSTM). The rule fixed in advance chose `graph_nolstm` as the contender, and it was not clearly better than `ppo` for all three practice runs, so **Gate G3 failed**: "no benefit observed".
+- **Gate G3b, a second look:** the G3 data suggested the version *with* memory (`graph_lstm`) did better. That idea came *after* seeing the data (it is "post-hoc"), so it was tested on five fresh practice runs it had never seen. It passed (5 of 5 better on validation days). By the rule set beforehand, **`graph_lstm` became the headline**. G3 stays recorded as failed.
+
+## Phase 7: the final test
+
+### What we did
+
+- Froze 20 trained models (their files are fingerprinted) and ran them **once** on the test days (days 1701 to 1941), together with the simple rules: 6 scenarios × 20 runs of delivery luck each, the same luck for every policy. A lock file (`reports/test_lock.json`) now refuses any second run of a learned model on those days, so nobody can tune on the exam.
+- The scenarios: no shock, a late road (+3 days), a demand jump (×1.5), a price cut (small and large effect on demand), and late road + demand jump together. The shocks are hidden: no policy is told in advance.
+- Everything is written up in `reports/phase_7.md`; the dashboard now shows the learned models and where the graph model "looks" (the attention panel); one command (`python -m supply_chain_rl.reproduce`) rebuilds the results from the raw files.
+
+### What we found
+
+| Test days, no shock | Total cost | Fill rate | Chain bullwhip |
+|---|------:|------:|------:|
+| `graph_lstm` (headline) | 4,981 | 98.9% | 0.79 |
+| `ppo` (simple learner) | 4,970 | 98.0% | 1.23 |
+| `graph_nolstm` | 4,819 | 98.4% | 0.69 |
+| `ppo_shock` (practised with shocks) | 5,339 | 96.8% | 0.91 |
+| Base-stock | 5,328 | 97.7% | 3.28 |
+| Moving-average | 5,378 | 96.7% | 15.78 |
+| Naive | 15,161 | 99.9% | 1.01 |
+
+- **The learned models beat base-stock.** `graph_lstm`, `ppo` and `graph_nolstm` cost clearly less than base-stock in all six scenarios, serve customers better and keep orders much calmer. The exception is `ppo_shock`, which costs about the same as base-stock.
+- **`graph_lstm` and `ppo` tie on total cost.** In no scenario is the difference larger than luck. `graph_lstm` is better on fill rate, calm orders, the cost including order changes, and the cost during the shock days, but not on the total cost the headline was chosen on.
+- **`graph_nolstm` is the cheapest named model** on the test days: clearly cheaper than `ppo` in every scenario, and with a lower average cost than `graph_lstm` in every scenario. The headline does **not** change because of this: it was fixed on validation evidence before the test.
+- **Practising with shocks did not pay off overall.** `ppo_shock` loses a little less during some shocks but costs more than `ppo` on all the other days, so it is dearer in every scenario.
+- **The learned models ignore the price.** When a price cut raises demand, they react to the extra demand they see, exactly as they react to a demand jump without a price cut. Nobody orders ahead of the cut, because the shocks are hidden.
+- **The simple rules recover faster.** After a single shock, base-stock and moving-average are back to normal in about 4 to 5 days; the learned models take about 5.5 to 9.5.
+
+### What the headline means, and does not mean
+
+The headline `graph_lstm` was fixed on validation evidence (Gate G3b). Gate G3 failed, and G3b tested an idea found after looking at the data, although on fresh runs. **The architecture beat the flat model on fresh seeds; this does not show that graph structure is the reason** (A22). In this small network both roads behave the same, so the map carries almost no extra information. The gain may come from a smaller model with shared weights rather than from "seeing the network".
+
+### Limits
+
+- One product, two stores, one warehouse, simulated days: the costs are relative weights, not money.
+- The test days are quieter than training (Store 1 sells about 0.82 of its training average), and validation days busier. Rankings carried over moderately; the headline fell from 3rd to 10th of 23.
+- The learned results cannot be re-run on the test days (the lock); their reproducibility is shown on the validation days, where every number matches exactly.
+
 ---
 
 ## Folders that support every phase
 
 | Folder / file | Purpose |
 |---------------|---------|
-| `tests/` | 154 automatic checks. Each test file checks one part, e.g. `test_rules.py` the game rules, `test_metrics.py` the scores, `test_policies.py` the baselines. Running `pytest` re-checks everything in seconds, so a later change can't silently break earlier work. |
+| `tests/` | 249 automatic checks. Each test file checks one part, e.g. `test_rules.py` the game rules, `test_metrics.py` the scores, `test_policies.py` the baselines. Running `pytest` re-checks everything in seconds, so a later change can't silently break earlier work. |
 | `reports/phase_N.md` | A plain-language report at the end of each phase: what was built, the evidence it works, and the decisions made. |
 | `DECISIONS.md` / `ASSUMPTIONS.md` | The project's memory: why things are the way they are. |
 
@@ -405,12 +467,7 @@ So `bullwhip_chain_mean` = "the average whole-chain bullwhip over 20 runs", and 
 
 ## What comes next, and why
 
-| Phase | Folder | What and why |
-|:-----:|--------|--------------|
-| 4 | `app/` | **A dashboard:** a visual screen to replay a run day by day (stock levels, orders, shocks), so anyone can see what happened instead of reading tables. |
-| 5 | `src/.../rl/` | **First learning computer (PPO):** trained in the game on the training days, reading the 13 numbers per node as a flat list. PPO is a standard, reliable learning method. |
-| 6 | `src/.../rl/` | **The special version:** the same learner, but reading the network as a map (a **GAT**, Graph Attention Network) and the last 7 days as a sequence (an **LSTM**, a memory component). We compare it with Phase 5 to find out whether "seeing the network" really helps. |
-| 7–8 | everything | Combine it all, run the final tests with shocks, and write up the results. |
+Phases 0 to 7 are finished. **Phase 8 is optional and not started:** a bigger network (two suppliers, two warehouses, four stores) and further experiments. Anything Phase 7 suggested (for example that `graph_nolstm` was cheaper) could be tested there only as a new idea fixed in advance, on new days or a new network.
 
 ---
 
@@ -424,4 +481,6 @@ Real data (Phase 1)  →  Practice game (Phase 2)  →  Yardstick: tuned rules +
        Scored on the same test days, the same scores, the same delivery luck
                                       ↓
    Does it beat base-stock: lower cost, better service, calmer orders?
+                                      ↓
+   Phase 7 answer: yes against base-stock; the graph headline ties the simple learner on cost
 ```

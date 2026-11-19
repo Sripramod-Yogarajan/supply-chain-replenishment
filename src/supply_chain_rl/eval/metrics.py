@@ -48,6 +48,43 @@ def days_to_recover(store_log: pd.DataFrame, start_day: int, end_day: int) -> fl
     return float(after["t"].min() - end_day) if not after.empty else math.nan
 
 
+WINDOWS = ("before", "during", "after")
+
+
+def window_metrics(
+    dec: pd.DataFrame, cost_holding: float, cost_stockout: float, start_day: int, end_day: int
+) -> dict[str, Any]:
+    """Fill rate, stockout units and cost before, during and after a window (DECISIONS D-32 b).
+
+    ``dec``: decision-day rows. *before* is ``t < start_day``, *during* the inclusive window,
+    *after* ``t > end_day``; the three parts add up to the whole run. Costs follow the whole-run
+    definition (holding on every stocking node plus stockouts); ``cost_per_day`` divides by the
+    days of the part, because the parts differ in length. No bullwhip ratio per window: ten days
+    are too few for a variance.
+    """
+    t = dec["t"]
+    parts = {
+        "before": dec[t < start_day],
+        "during": dec[(t >= start_day) & (t <= end_day)],
+        "after": dec[t > end_day],
+    }
+    out: dict[str, Any] = {}
+    for name, part in parts.items():
+        stores = part[part["node_type"] == "store"]
+        stocking = part[part["node_type"].isin(ORDERING_TYPES)]
+        short = int(stores["stockout"].sum())
+        cost = cost_holding * float(stocking["stock_end"].sum()) + cost_stockout * short
+        days = int(part["t"].nunique())
+        out[f"days_{name}"] = days
+        out[f"fill_rate_{name}"] = _ratio(
+            float(stores["sold"].sum()), float(stores["demand"].sum())
+        )
+        out[f"stockout_units_{name}"] = short
+        out[f"total_cost_{name}"] = cost
+        out[f"cost_per_day_{name}"] = _ratio(cost, float(days))
+    return out
+
+
 def run_metrics(
     log: pd.DataFrame,
     cost_holding: float,
@@ -102,6 +139,11 @@ def run_metrics(
     cust = stores.groupby("t")["demand"].sum()
     if not wh_orders.empty:
         out["bullwhip_chain"] = _ratio(_pvar(wh_orders), _pvar(cust))
+    # the three variances behind the level ratios (for the dashboard's bullwhip chart, D-39)
+    out["var_customer_demand"] = _pvar(cust)
+    out["var_store_orders"] = _pvar(stores.groupby("t")["order"].sum())
+    out["var_warehouse_orders"] = _pvar(wh_orders)
+    out["cost_per_day"] = _ratio(out["total_cost"], float(out["decision_days"]))
 
     if shock_window is not None:
         a, b = shock_window
@@ -112,4 +154,5 @@ def run_metrics(
         valid = [r for r in rec if not math.isnan(r)]
         out["days_to_recover"] = float(np.mean(valid)) if valid else math.nan
         out["stores_not_recovered"] = len(rec) - len(valid)
+        out.update(window_metrics(dec, cost_holding, cost_stockout, a, b))
     return out

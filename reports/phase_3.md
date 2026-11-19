@@ -93,15 +93,20 @@ agent, which sees the lower price on the first day of the window.
   base-stock wins on only 12 of 20 seeds.
 - **Service:** base-stock is better on 18 of 20 seeds (97.7% against 96.7% fill rate).
 - **Stability:** base-stock is far better. Its orders swing a fifth as much from the shelf to the
-  supplier (chain bullwhip 3.3 against 15.8). It has half the order-change cost, never hits the
-  order cap (moving average's warehouse does on every seed), and puts a tenth of the rationing
-  pressure on the warehouse.
+  supplier (chain bullwhip 3.3 against 15.8). It has half the order-change cost, ~~never hits the
+  order cap (moving average's warehouse does on every seed)~~ rarely hits the order cap, and puts
+  a tenth of the rationing pressure on the warehouse. *(corrected 2026-11-16, see
+  `reports/reproduction.md` 3.3 and DECISIONS D-30: base-stock's warehouse never reaches its cap,
+  largest order 315 against 348, but its stores are clipped on 0.4% (St1) and 1.0% (St2) of test
+  days. Moving average's warehouse reaches its cap on every seed and its stores are clipped on
+  32% and 56% of test days. The `largest_order` column is the maximum over all nodes, so it shows
+  only the warehouse.)*
 
 Why: moving average turns every rise in demand into two increases. It orders to replace what was
 sold, and it raises its own target, because the target follows the average. The warehouse then
 sees the stores' amplified orders as "demand" and does the same again. On test day 1730, seed 1,
 the moving-average warehouse's 7-day average of orders received was 310 units/day while customers
-bought about 113. That is the bullwhip effect, produced by the rule itself. Base-stock's target
+bought ~~about 113~~ about 110 over the same seven days *(corrected 2026-11-16, D-30)*. That is the bullwhip effect, produced by the rule itself. Base-stock's target
 is fixed, so it only replaces what left the position, and its orders follow demand.
 
 Base-stock is not free of amplification (chain ratio 3.3, not 1). Under R4 an unfilled warehouse

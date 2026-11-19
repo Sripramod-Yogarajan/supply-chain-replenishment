@@ -23,14 +23,14 @@ import yaml
 from supply_chain_rl.config import load_config
 from supply_chain_rl.eval.runner import load_tuned, play
 from supply_chain_rl.paths import CONFIG_PATH, DERIVED_PATH, ROOT
-from supply_chain_rl.policies.registry import POLICY_NAMES, make_policy
+from supply_chain_rl.policies.registry import LEARNED, POLICY_NAMES, make_policy
 from supply_chain_rl.sim import logs
 from supply_chain_rl.sim.data import load_sim_data
 from supply_chain_rl.sim.daytable import format_day_table
 from supply_chain_rl.sim.env import SupplyChainEnv
 from supply_chain_rl.sim.golden import GB_ORDERS, ga_setup
 
-POLICIES = POLICY_NAMES
+POLICIES = tuple(p for p in POLICY_NAMES if p not in LEARNED)  # rule-based (units mode)
 
 
 def run_policy(

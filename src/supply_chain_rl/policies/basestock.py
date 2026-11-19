@@ -9,10 +9,14 @@ at a fixed target ``S``::
 ``avg_d`` is the training-days average demand of the node (fixed for the whole run) and ``m`` is
 one multiplier for all stores and one for all warehouses, tuned on training days only
 (``eval.baselines``). The ``+ 1`` covers the day between two decisions. Orders go through R1.
+
+Per chain (DECISIONS D-69 d, eight-node network): each warehouse chain (a warehouse and its stores)
+may have its own pair, given as ``m_store@W1``, ``m_warehouse@W1``, ... (:func:`chain_of`).
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -37,6 +41,34 @@ def mean_lead_times(topo: Topology, data: SimData, min_lead_time: int) -> dict[s
     }
 
 
+def chain_of(topo: Topology, node: str) -> str:
+    """The warehouse chain of an ordering node: the warehouse itself, or a store's warehouse."""
+    return node if topo.types[node] == "warehouse" else topo.parent[node]
+
+
+def chains(topo: Topology) -> tuple[str, ...]:
+    """Warehouse ids in config order: one chain each (D-69 d)."""
+    return tuple(n for n in topo.ordering if topo.types[n] == "warehouse")
+
+
+def chain_names(base: tuple[str, ...], topo: Topology) -> tuple[str, ...]:
+    """Per-chain parameter names, e.g. ``("m_store@W1", "m_warehouse@W1", "m_store@W2", ...)``."""
+    return tuple(f"{b}@{w}" for w in chains(topo) for b in base)
+
+
+def multipliers(
+    topo: Topology, params: Mapping[str, float], store_key: str, wh_key: str
+) -> dict[str, float]:
+    """Multiplier of every ordering node from shared (``m_store``) or per-chain
+    (``m_store@W1``) parameters."""
+    out = {}
+    for n in topo.ordering:
+        key = store_key if topo.types[n] == "store" else wh_key
+        chained = f"{key}@{chain_of(topo, n)}"
+        out[n] = float(params[chained] if chained in params else params[key])
+    return out
+
+
 def order_up_to(topo: Topology, nb: Notebook, targets: Mapping[str, float]) -> dict[str, float]:
     """The shared order rule of R11 and R12: fill the inventory position up to ``targets``."""
     return {n: max(0.0, targets[n] - (nb.stock[n] + nb.pipeline_total(n))) for n in topo.ordering}
@@ -50,6 +82,7 @@ class BaseStock:
     m_warehouse: float
     targets: Mapping[str, float]
     name: str = "basestock"
+    chain_params: Mapping[str, float] | None = None  # per-chain parameters (D-69 d)
 
     @classmethod
     def build(
@@ -69,8 +102,20 @@ class BaseStock:
         }
         return cls(m_store, m_warehouse, targets)
 
+    @classmethod
+    def build_per_chain(
+        cls, topo: Topology, data: SimData, min_lead_time: int, params: Mapping[str, float]
+    ) -> BaseStock:
+        """R11 with one ``(m_store, m_warehouse)`` pair per warehouse chain (D-69 d)."""
+        lead = mean_lead_times(topo, data, min_lead_time)
+        mult = multipliers(topo, params, "m_store", "m_warehouse")
+        targets = {n: mult[n] * data.avg_d[n] * (lead[n] + 1.0) for n in topo.ordering}
+        return cls(math.nan, math.nan, targets, chain_params=dict(params))
+
     def orders(self, topo: Topology, nb: Notebook) -> dict[str, float]:
         return order_up_to(topo, nb, self.targets)
 
     def params(self) -> dict[str, float]:
+        if self.chain_params is not None:
+            return dict(self.chain_params)
         return {"m_store": self.m_store, "m_warehouse": self.m_warehouse}

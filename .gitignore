@@ -10,7 +10,9 @@ data/processed/*
 runs/*
 results/
 reports/figures/
+checkpoints/
 !**/.gitkeep
 .env
 *.pt
 *.parquet
+backup_*_manifest.sha256

@@ -53,13 +53,182 @@ scenarios:                 # Phase 3 evaluation scenarios on the test days (manu
     # of other FOODS items in CA_1/CA_3 give 0.17 (95% 0.04 to 0.48; supply_chain_rl.data.uplift)
     price_discount: {type: price_discount, target: [St1], d: 0.2, u: 0.2}
     price_discount_high: {type: price_discount, target: [St1], d: 0.2, u: 0.5}   # sensitivity: top of the range
+    combined: {shocks: [transit_delay, demand_spike]}   # D-63: both at St1 in the same window
 rl:
-  embed_dim: 16
+  embed_dim: 16            # Phase 6 (graph encoder, D-55)
   gat_layers: 2
   lstm_hidden: 16
+  pretrain_encoder: false  # superseded by the per-variant `pretrain` flag (D-57)
+  graph_head_hidden: [64]  # shared actor head and critic head on the node summaries
+  phase6_target_kl: null   # KL stop tried at 0.015 and not adopted (D-54); Phase 5 updates
+  phase6_dir: checkpoints/phase6   # not committed; back this folder up
+  variants:                # Phase 6 ablations (D-57); graph defaults: lstm true, no dropped features
+    flat: {model: flat}
+    graph_nolstm: {lstm: false}
+    graph_lstm: {}
+    graph_lstm_no_wd_snap: {drop_features: [sin_wd, cos_wd, snap]}
+    graph_lstm_no_event: {drop_features: [event]}
+    graph_lstm_no_price: {drop_features: [price]}
+    graph_lstm_pretrained: {pretrain: true}
+    flat_shock: {model: flat, train_shocks: true}   # D-62, the D-27 variant (ppo_shock)
+  train_shocks:            # D-62: hidden shocks in training episodes of flat_shock only
+    prob: 0.5              # one shock per episode with this probability, else none
+    length_days: 10        # the test window length
+    types: [transit_delay, demand_spike, price_discount]   # uniform; S4 never used
+    delay_days: [1, 4]     # integers, inclusive (test: 3), one random road
+    spike_k: [1.2, 1.8]    # uniform (test: 1.5), one random store
+    discount_d: 0.2        # as the test scenarios
+    discount_u: [0.1, 0.6] # uniform (tests: 0.2 and 0.5), one random store
+  g3b:                     # D-60: post-hoc hypothesis (graph_lstm beats flat), tested on fresh seeds
+    training_seeds: [1004, 1005, 1006, 1007, 1008]
+    flat: flat
+    contender: graph_lstm
+    secondary: graph_nolstm
+    split: val
+    per_seed_z: 1.96       # interval over evaluation seeds 1-20 (Phase 3 rule)
+    mean_interval: t_over_training_seeds   # t(0.975, 4) = 2.776 over the 5 per-seed means
+    min_seeds_clearly_better: 4
+    checkpoint_dir: checkpoints/g3b        # <model>_s<seed>/; not committed; back this folder up
+  pretrain:                # encoder pretraining on next-day store demand (D-58)
+    episodes: 400          # base-stock training episodes of 60 decision days (windows)
+    val_episodes: 0        # 0 = the whole validation stretch, evaluation seeds of pretraining below
+    seed_stream: pretrain
+    epochs: 30
+    lr: 0.001
+    minibatch_size: 256
+  # PPO (Phase 5; manual 12.1 as amended by D-35; settings of D-48 to D-50)
   discount: 0.99
   gae_lambda: 0.95
   clip: 0.2
-  steps_per_update: 2048
+  steps_per_update: 1920   # whole episodes only: n_envs x 4 episodes x 60 decision days (D-50)
   lr: 0.0003
-  pretrain_encoder: false
+  n_envs: 8                # training episodes played side by side
+  flat_hidden: [128, 128]  # actor and critic: two tanh layers each, separate networks
+  epochs_per_update: 10
+  minibatch_size: 256
+  entropy_coef: 0.001
+  value_coef: 0.5
+  max_grad_norm: 0.5       # applied to actor and critic separately
+  init_mean_fraction: 0.3333   # starting mean action = average demand (D-35 a)
+  init_std: 0.10           # starting spread, in fractions of the cap (D-35 a)
+  eval_every_updates: 10
+  selection_seeds: [201, 202, 203, 204, 205]   # checkpoint selection on validation days (D-35 d)
+  min_updates: 200
+  max_updates: 1000
+  patience_evals: 15       # stop after this many evaluations without a lower validation cost
+  training_seeds: [1001, 1002, 1003]   # at least three (D-35 e)
+  train_start_stock_days:  # starting stock drawn per node in training episodes only (D-35 c, D-49)
+    store: [0.5, 4.0]
+    warehouse: [0.25, 8.0]
+  device: cpu              # measured faster than the GPU for these networks (D-48)
+  torch_threads: 1
+  checkpoint_dir: checkpoints/phase5   # not committed; back this folder up
+  selected_checkpoint: checkpoints/phase5/ppo_selected.pt   # the policy registered as "ppo"
+  evaluated:               # D-61: frozen list for the single learned test run (SHA-256 checked on load)
+    graph_lstm:
+      checkpoint: checkpoints/g3b/graph_lstm_s1005/best.pt
+      sha256: 2e0cd71574869350a146c88196fc4771c4274ee64856785ed3a4840280134c2e
+      label: "headline: G3b passed (post-hoc hypothesis tested on fresh seeds); G3 failed"
+    ppo:
+      checkpoint: checkpoints/phase5/ppo_selected.pt
+      sha256: 69d1af51dc4f1a77c84daa324ada8312822592be5aeb6465170b843ef84ab771
+      label: "flat Phase 5 model (G2), former headline"
+    graph_nolstm:
+      checkpoint: checkpoints/phase6/graph_nolstm_s1002/best.pt
+      sha256: 90cd1d5a97bb7e8988799180a7e102e2c78e3e18e11f5d289c54d5ccef6d9dab
+      label: "pre-registered G3 contender, G3 not passed"
+    ppo_shock:
+      checkpoint: checkpoints/phase7/ppo_shock_selected.pt
+      sha256: 93b5eb69a22f4c44724d80ce30b725678caba053696605afe0b39b2d6cf48c27
+      label: "D-27 shock-trained flat variant"
+    ppo_p5_s1002:
+      checkpoint: checkpoints/phase5/prototype_s1002/best.pt
+      sha256: 830baaaf4e4aab83d19608c57e12f9235b74ea7ad74515d7bc52d38a04ea6997
+      label: "supplementary"
+    ppo_p5_s1003:
+      checkpoint: checkpoints/phase5/prototype_s1003/best.pt
+      sha256: 4728c4b9d8e3e6fbe1f05efbc3c25b68373d665d2d29e6c6eb7ac3d6ad08deac
+      label: "supplementary"
+    graph_lstm_p6_s1001:
+      checkpoint: checkpoints/phase6/graph_lstm_s1001/best.pt
+      sha256: b2418643a49b14372d3af0a383a4d72478865ba7a69ce85471a97db00cecbeec
+      label: "supplementary"
+    graph_lstm_p6_s1002:
+      checkpoint: checkpoints/phase6/graph_lstm_s1002/best.pt
+      sha256: 0e97f82f0dc32210744732d6eedc2d709519422241852d73d6afa6b90af21ff1
+      label: "supplementary"
+    graph_lstm_p6_s1003:
+      checkpoint: checkpoints/phase6/graph_lstm_s1003/best.pt
+      sha256: 46b0df04172db30508a3ad7dc6808075474aa95c302b023d8017d78b1f080809
+      label: "supplementary"
+    graph_nolstm_p6_s1001:
+      checkpoint: checkpoints/phase6/graph_nolstm_s1001/best.pt
+      sha256: eeb901055914478119b138c5f87c85388595dc9e9ab33db908d40f492d43270c
+      label: "supplementary"
+    graph_nolstm_p6_s1003:
+      checkpoint: checkpoints/phase6/graph_nolstm_s1003/best.pt
+      sha256: e9f947ec8c2a44dd5d9fa37e5e3a5e52075e3aad07894bef6f6c2c73bb56adc6
+      label: "supplementary"
+    flat_g3b_s1004:
+      checkpoint: checkpoints/g3b/flat_s1004/best.pt
+      sha256: e843a61c4dfeff94909c38db312fba2655453b27b3368375c44a369fb8e67fac
+      label: "supplementary"
+    flat_g3b_s1005:
+      checkpoint: checkpoints/g3b/flat_s1005/best.pt
+      sha256: 3a5cb4f945a090b52791250a483bb6ca5279f0d08e6c817627058c988e1bb0ee
+      label: "supplementary"
+    flat_g3b_s1006:
+      checkpoint: checkpoints/g3b/flat_s1006/best.pt
+      sha256: 0df63c097a78f62e8215921d9124b664813cf707f34a3073956760f519e49bb2
+      label: "supplementary"
+    flat_g3b_s1007:
+      checkpoint: checkpoints/g3b/flat_s1007/best.pt
+      sha256: 8598c088936facdbf28270a54f4fae6907f703e95734f0143fb9c8176be5a1db
+      label: "supplementary"
+    flat_g3b_s1008:
+      checkpoint: checkpoints/g3b/flat_s1008/best.pt
+      sha256: 345a154adf53ecf496c32e5e367b4052b03ef980bc891389ef3cc25aedf70719
+      label: "supplementary"
+    graph_lstm_g3b_s1004:
+      checkpoint: checkpoints/g3b/graph_lstm_s1004/best.pt
+      sha256: f4b30b587cc36260d436c996c990a142d0e07d944ba363503fc12188093b9b78
+      label: "supplementary"
+    graph_lstm_g3b_s1006:
+      checkpoint: checkpoints/g3b/graph_lstm_s1006/best.pt
+      sha256: 88db25199f6119b38c1e7a5a3f84f716b15675c14d3f116361d1c2232dc65907
+      label: "supplementary"
+    graph_lstm_g3b_s1007:
+      checkpoint: checkpoints/g3b/graph_lstm_s1007/best.pt
+      sha256: 0f55ea683efc8233ab68b5eb3956ac55f484fee9321bc8449b154857aa41d11c
+      label: "supplementary"
+    graph_lstm_g3b_s1008:
+      checkpoint: checkpoints/g3b/graph_lstm_s1008/best.pt
+      sha256: 71b00d8bdd2a9acd9f32d0638cb8c141e3599a7e1f74fb81de7618a91bbd2bb6
+      label: "supplementary"
+  allow_test_split: true   # D-61: single learned test run after G3b (owner, 2026-11-18); test_lock.json refuses a second
+  smoke:                   # Phase 5 smoke test (D-26)
+    nodes:
+      - {id: S1, type: supplier}
+      - {id: W1, type: warehouse, supplier: S1}
+      - {id: St1, type: store, m5_store: CA_1, warehouse: W1}
+    max_updates: 300
+    min_updates: 100
+    training_seeds: [1001]
+dashboard:                 # Phase 4 simulation dashboard (DECISIONS D-33, D-39, D-41)
+  replay_seed: 1           # the run that is replayed; KPI cards use all evaluation seeds
+  reference_policy: basestock   # KPI differences are shown against this policy (D-33 b)
+  # Map colours by days of cover = end-of-day stock / the node's average daily demand on training
+  # days. Chosen from training and validation days (D-39): below `critical` a store stocks out the
+  # next day in 29 to 49% of cases and a warehouse rations in 57 to 84%; at or above `low` in 0 to 3%
+  # (stores) and 7 to 11% (base-stock warehouse).
+  cover_days:
+    store:     {critical: 1.0, low: 1.5}
+    warehouse: {critical: 0.25, low: 1.0}
+  play_speeds: [1, 2, 5]   # simulated days per second (target)
+  chart_window_days: 60    # width of the charts' follow-the-day view
+  # Custom shocks are demonstration only (D-41). A learned policy is added to this list only after
+  # its single official evaluation on the test days.
+  custom_policies: [warmup, basestock, movavg]
+  # Phase 7 (D-64): graph policies whose attention weights are written beside their logs during
+  # the single test run (the attention panel reads them; no learned policy runs on test days again)
+  attention_policies: [graph_lstm, graph_nolstm]
