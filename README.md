@@ -76,7 +76,7 @@ Dashboard after Phase 8: readable in light and dark mode, and the eight-node net
 
 ```
 py -3.11 -m venv .venv
-.venv\Scriptsctivate
+.venv\Scripts\activate
 pip install -r requirements.lock
 pip install -e . --no-deps
 ```
@@ -141,7 +141,11 @@ They show results already reported in Phases 3 and 4.
 | Comparison table (20-seed mean ± sd) | ![comparison](docs/screenshots/07_comparison_table.png) |
 | Bullwhip chart (20-seed means) | ![bullwhip](docs/screenshots/08_bullwhip_chart.png) |
 
-Checkpoints are not committed: back up `checkpoints/phase5/`, `checkpoints/phase6/`, `checkpoints/g3b/` and `checkpoints/phase7/` (the 20 frozen policies of D-61), and keep `results/phase7/test_official/` and `runs/test/`, which cannot be regenerated after the test lock.
+Checkpoints are not committed: back up `checkpoints/phase5/`, `checkpoints/phase6/`, `checkpoints/g3b/` and `checkpoints/phase7/` (the 20 frozen policies of D-61), and keep `results/phase7/test_official/`, `runs/test/` and `runs/net8/`, which cannot be regenerated after the test lock.
+
+The trained checkpoints and the learned test logs (`checkpoints/`, `results/`, `runs/` including
+`runs/net8/` and `runs/test/`) are not committed, because of their size and the test lock; the
+authors keep them offline.
 
 Phase 5 run order: `rl.bench`, `eval.baselines tune --network smoke --policies basestock`, the smoke `rl.train`, then the three prototype `rl.train` runs (about 20 min in parallel on the CPU), `rl.report smoke`, `rl.report prototype --select` and `eval.run ... ppo --split val`. Checkpoints go to `checkpoints/phase5/<network>_s<seed>/` (`last.pt`, `best.pt`, `curve.csv`, `train.log`, `done.json`) and the registered policy to `checkpoints/phase5/ppo_selected.pt`; they are not committed, so back up that folder. Results in `results/phase5/`; figures in `reports/figures/phase5_*.png`, with tracked copies in `docs/figures/phase_5/`.
 
@@ -179,6 +183,18 @@ Phase 5 run order: `rl.bench`, `eval.baselines tune --network smoke --policies b
 | `python -m supply_chain_rl.dashboard.screenshots --phase8` | 8 (available: theme and eight-node images) |
 
 ## Data
+
+### Data sources
+
+- **M5**: the M5 Forecasting competition data on Kaggle,
+  <https://www.kaggle.com/competitions/m5-forecasting-accuracy>. See the original source for the
+  terms of use.
+- **DataCo**: the DataCo Smart Supply Chain dataset (Constante, Silva and Pereira) on Mendeley
+  Data, <https://data.mendeley.com/datasets/8gx2fvg2k6/5>, where it is listed under CC BY 4.0. See
+  the original source for the full terms.
+
+The raw data is **not** included in this repository. Download it from the original sources
+yourself; the original terms of use apply.
 
 Place the M5 files in `data/raw/m5/` and the DataCo file in `data/raw/dataco/` (see manual
 Section 3). Raw and processed data are not committed.
